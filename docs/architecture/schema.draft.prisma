@@ -64,8 +64,8 @@ enum CredentialType {
 }
 
 enum MailboxAccessRole {
-  OWNER // the person whose mailbox it is; read, send, manage, archive, delete
-  DELEGATE // shared-mailbox member; read, send-as, organise, archive
+  OWNER // the person whose mailbox it is; read, send, manage, delete
+  DELEGATE // shared-mailbox member; read, send-as, organise
   READ_ONLY // read & search only (e.g. auditor)
 }
 
@@ -91,35 +91,6 @@ enum ContactSource {
   MANUAL
   AUTO // harvested from recipients the user has sent to
   IMPORTED
-}
-
-enum ArchiveTrigger {
-  MANUAL
-  POLICY // future automated archival
-}
-
-enum ArchiveBatchStatus {
-  QUEUED
-  RUNNING
-  COMPLETED
-  PARTIAL // some messages failed
-  FAILED
-  CANCELLED
-}
-
-enum ArchiveStatus {
-  PENDING
-  UPLOADED // object written, not yet verified
-  VERIFIED // checksum + size + metadata verified → safe to offer removal
-  FAILED
-}
-
-enum LiveCopyState {
-  PRESENT // original still in the live mailbox
-  MOVED_TO_TRASH // user chose "move original to Trash"
-  EXPUNGED // user confirmed permanent removal from the server
-  RESTORED // archived copy was re-uploaded to the live mailbox
-  UNKNOWN // live copy disappeared outside our control
 }
 
 // -----------------------------------------------------------------------------
@@ -165,7 +136,6 @@ model User {
   grantsMade    MailboxAccess[]   @relation("AccessGrantedBy")
   signatures    Signature[]
   composeDrafts ComposeDraft[]
-  archiveBatches ArchiveBatch[]
 
   @@index([organizationId])
   @@map("users")
@@ -283,9 +253,6 @@ model Mailbox {
   contacts         Contact[]
   signatures       Signature[]
   composeDrafts    ComposeDraft[]
-  archiveBatches   ArchiveBatch[]
-  archivedMessages ArchivedMessage[]
-  archivePolicies  ArchivePolicy[]
   storageSnapshots StorageSnapshot[]
 
   @@index([organizationId])
@@ -397,9 +364,6 @@ model MessageMeta {
   hasAttachments Boolean  @default(false) @map("has_attachments")
   preview       String?   @db.VarChar(300) // plain-text snippet
 
-  /// Set when an archive copy exists in S3 (links to ArchivedMessage).
-  archivedMessageId String? @map("archived_message_id") @db.Char(36)
-
   createdAt     DateTime  @default(now()) @map("created_at")
   updatedAt     DateTime  @updatedAt @map("updated_at")
 
@@ -485,124 +449,9 @@ model Signature {
 }
 
 // -----------------------------------------------------------------------------
-// Archive vault (S3) — independent of MilesWeb storage
+// Archive vault — DEFERRED (not in v1). The design is kept in
+// PHASE-1-ARCHITECTURE.md §6; its tables will be added by a later migration.
 // -----------------------------------------------------------------------------
-
-model ArchiveBatch {
-  id            String             @id @default(uuid(7)) @db.Char(36)
-  mailboxId     String             @map("mailbox_id") @db.Char(36)
-  requestedById String?            @map("requested_by_id") @db.Char(36)
-  trigger       ArchiveTrigger     @default(MANUAL)
-  policyId      String?            @map("policy_id") @db.Char(36)
-  status        ArchiveBatchStatus @default(QUEUED)
-  totalCount    Int                @default(0) @map("total_count")
-  verifiedCount Int                @default(0) @map("verified_count")
-  failedCount   Int                @default(0) @map("failed_count")
-  totalBytes    BigInt             @default(0) @map("total_bytes")
-  createdAt     DateTime           @default(now()) @map("created_at")
-  completedAt   DateTime?          @map("completed_at")
-
-  mailbox     Mailbox           @relation(fields: [mailboxId], references: [id], onDelete: Restrict)
-  requestedBy User?             @relation(fields: [requestedById], references: [id], onDelete: SetNull)
-  policy      ArchivePolicy?    @relation(fields: [policyId], references: [id], onDelete: SetNull)
-  messages    ArchivedMessage[]
-
-  @@index([mailboxId, createdAt(sort: Desc)])
-  @@map("archive_batches")
-}
-
-model ArchivedMessage {
-  id             String        @id @default(uuid(7)) @db.Char(36)
-  organizationId String        @map("organization_id") @db.Char(36)
-  mailboxId      String        @map("mailbox_id") @db.Char(36)
-  batchId        String?       @map("batch_id") @db.Char(36)
-  status         ArchiveStatus @default(PENDING)
-  failureReason  String?       @db.Text @map("failure_reason")
-
-  // --- S3 object ----------------------------------------------------------
-  s3Bucket       String?       @map("s3_bucket")
-  s3Key          String?       @db.VarChar(512) @map("s3_key")
-  s3VersionId    String?       @map("s3_version_id")
-  sha256         String        @db.Char(64) // hex SHA-256 of the exact RFC 822 bytes
-  sizeBytes      BigInt        @map("size_bytes")
-  storageClass   String?       @map("storage_class")
-  verifiedAt     DateTime?     @map("verified_at")
-
-  // --- provenance (where it came from in the live mailbox) ----------------
-  originalFolderPath  String   @db.VarChar(512) @map("original_folder_path")
-  originalUidValidity BigInt   @map("original_uid_validity")
-  originalUid         BigInt   @map("original_uid")
-  originalFlags       Json     @map("original_flags")
-  internalDate        DateTime @db.DateTime(3) @map("internal_date")
-
-  // --- searchable metadata ------------------------------------------------
-  messageIdHeader String?   @db.VarChar(512) @map("message_id_header")
-  subject         String?   @db.Text
-  fromName        String?   @db.VarChar(255) @map("from_name")
-  fromAddress     String?   @db.VarChar(320) @map("from_address")
-  toAddrs         Json      @map("to_addrs")
-  ccAddrs         Json      @map("cc_addrs")
-  bccAddrs        Json      @map("bcc_addrs")
-  sentAt          DateTime? @db.DateTime(3) @map("sent_at")
-  hasAttachments  Boolean   @default(false) @map("has_attachments")
-  textExcerpt     String?   @db.MediumText @map("text_excerpt") // first ~32 KB of plain text, for FULLTEXT
-
-  // --- live copy lifecycle (deletion only after VERIFIED + confirmation) --
-  liveCopyState     LiveCopyState @default(PRESENT) @map("live_copy_state")
-  liveCopyChangedAt DateTime?     @map("live_copy_changed_at")
-  liveCopyChangedBy String?       @map("live_copy_changed_by") @db.Char(36)
-  restoredAt        DateTime?     @map("restored_at")
-
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  mailbox     Mailbox             @relation(fields: [mailboxId], references: [id], onDelete: Restrict)
-  batch       ArchiveBatch?       @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  attachments ArchiveAttachment[]
-
-  /// Content-addressed: archiving the same bytes twice is idempotent.
-  @@unique([mailboxId, sha256])
-  @@index([mailboxId, sentAt(sort: Desc)])
-  @@index([mailboxId, status])
-  @@fulltext([subject, fromName, fromAddress, textExcerpt])
-  @@map("archived_messages")
-}
-
-/// Attachment inventory of an archived EML (bytes stay inside the EML in S3).
-model ArchiveAttachment {
-  id                String  @id @default(uuid(7)) @db.Char(36)
-  archivedMessageId String  @map("archived_message_id") @db.Char(36)
-  partId            String  @map("part_id") // MIME part path, e.g. "2.1"
-  filename          String?  @db.VarChar(512)
-  contentType       String  @map("content_type")
-  sizeBytes         Int     @map("size_bytes")
-  sha256            String?  @db.Char(64)
-  isInline          Boolean @default(false) @map("is_inline")
-
-  archivedMessage ArchivedMessage @relation(fields: [archivedMessageId], references: [id], onDelete: Cascade)
-
-  @@index([archivedMessageId])
-  @@map("archive_attachments")
-}
-
-/// Future automated archival (schema only in v1; no scheduler UI yet).
-model ArchivePolicy {
-  id            String    @id @default(uuid(7)) @db.Char(36)
-  mailboxId     String    @map("mailbox_id") @db.Char(36)
-  enabled       Boolean   @default(false)
-  olderThanDays Int       @map("older_than_days") // e.g. 365
-  folderPaths   Json      @map("folder_paths") // empty = all except Drafts/Trash/Junk
-  /// Policies NEVER remove originals automatically in v1; they only archive
-  /// and then notify the owner to confirm removal.
-  lastRunAt     DateTime? @map("last_run_at")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
-
-  mailbox Mailbox        @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
-  batches ArchiveBatch[]
-
-  @@map("archive_policies")
-}
 
 // -----------------------------------------------------------------------------
 // Observability & compliance
@@ -613,7 +462,6 @@ model StorageSnapshot {
   mailboxId  String      @map("mailbox_id") @db.Char(36)
   usedBytes  BigInt      @map("used_bytes")
   limitBytes BigInt?     @map("limit_bytes")
-  archiveBytes BigInt    @default(0) @map("archive_bytes")
   source     QuotaSource
   takenAt    DateTime    @default(now()) @map("taken_at")
 
@@ -631,7 +479,7 @@ model AuditLog {
   organizationId String   @map("organization_id") @db.Char(36)
   actorUserId    String?  @map("actor_user_id") @db.Char(36) // null = system/worker
   mailboxId      String?  @map("mailbox_id") @db.Char(36)
-  action         String   @db.VarChar(100) // e.g. "auth.login.success", "archive.live_copy.expunge"
+  action         String   @db.VarChar(100) // e.g. "auth.login.success", "message.delete_permanent"
   targetType     String?  @map("target_type")
   targetId       String?  @map("target_id")
   ipAddress      String?  @map("ip_address")

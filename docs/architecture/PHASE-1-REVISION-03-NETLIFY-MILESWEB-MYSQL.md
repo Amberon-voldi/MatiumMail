@@ -1,10 +1,11 @@
 # Phase 1 — Revision 03: Netlify hosting + MySQL on MilesWeb
 
 > Status: **Proposal — awaiting approval. Current.**
-> Supersedes Revision 02 (AWS Amplify) and Revision 01 (Cloudflare). The MySQL schema notes in [Revision 01 §4](./PHASE-1-REVISION-01-CLOUDFLARE-MYSQL.md#4-mysql-changes) still apply, and [`schema.draft.prisma`](./schema.draft.prisma) (MySQL, Prisma 7) is unchanged.
-> Unchanged from [`PHASE-1-ARCHITECTURE.md`](./PHASE-1-ARCHITECTURE.md): library choices for the mail side, the Vault workflow (verify before removal, explicit confirmation), HTML sanitisation and the security model.
-> **No AWS is involved.** Archive storage and key management are replaced as described in §3.3 and §3.4. (AWS S3 and KMS in the original document are superseded.)
-> "For now" is taken to mean: **v1 runs on Netlify + MilesWeb (+ one S3-compatible storage provider), with no server of our own**, and the code is structured so an always-on mail worker can be added later without a rewrite.
+> Supersedes Revision 02 (AWS Amplify) and Revision 01 (Cloudflare). The MySQL schema notes in [Revision 01 §4](./PHASE-1-REVISION-01-CLOUDFLARE-MYSQL.md#4-mysql-changes) still apply, and [`schema.draft.prisma`](./schema.draft.prisma) is MySQL / Prisma 7 with the archive tables removed.
+> Unchanged from [`PHASE-1-ARCHITECTURE.md`](./PHASE-1-ARCHITECTURE.md): library choices for the mail side, HTML sanitisation and the security model.
+> **No AWS is involved.** Key management is replaced as described in §3.3. (AWS S3 and KMS in the original document are superseded.)
+> **Archiving (the S3 "Vault") is deferred and out of v1 scope.** Its design stays in the original document §6 for a later phase; see §3.4 for what v1 does instead.
+> "For now" is taken to mean: **v1 runs entirely on Netlify + MilesWeb, with no server of our own and no other providers apart from Prisma Accelerate (§2)**, and the code is structured so an always-on mail worker can be added later without a rewrite.
 
 ## 1. Platform facts that shape v1
 
@@ -14,7 +15,7 @@
 | Synchronous functions time out at **~10 s by default** (raised on paid plans); **background functions** run up to **15 min** (asynchronous, with automatic retries); **scheduled functions** run on a cron | Interactive actions must stay small. Initial sync, bulk actions and archiving run as chunked background jobs. |
 | Functions run in **one region (US East by default)** | MilesWeb's mail and MySQL servers are presumably in India, so every IMAP command and SQL query would cross ~250 ms. **Setting the functions region close to MilesWeb is essential** (needs to be checked on your Netlify plan). |
 | **No static outbound IP** unless you buy Netlify **Private Connectivity** (Enterprise) | Two problems: MilesWeb **Remote MySQL** normally whitelists specific IPs, and MilesWeb can't whitelist us for IMAP/SMTP. |
-| Function responses are size-limited | Attachments go through short-lived presigned storage URLs, never through a function. |
+| Function **request bodies are capped at ~6 MB**; **streamed responses at 20 MB** (and 60 s) | Attachments need chunked uploads and streamed or ranged downloads (§3.5). |
 
 ## 2. The MySQL-on-MilesWeb problem and the fix
 
@@ -47,13 +48,13 @@ Netlify functions ──HTTPS──► Prisma Accelerate pool (region near Miles
 Browser ──HTTPS──► Netlify  (mail.matiumtech.com)
                     Next.js (Netlify's Next.js runtime): UI + server actions + route handlers
                     ├─ sync functions:       sessions, lists, search, flag/move, open message, send
-                    ├─ background functions: initial sync, backfill, bulk actions, Vault archive/restore
+                    ├─ background functions: initial sync, backfill, bulk actions, outbox (sending)
                     └─ scheduled functions:  periodic refresh of counts/quota for active mailboxes
                          │                   │                         │
-                         │ IMAPS/SMTPS       │ Prisma Accelerate       │ HTTPS (S3-compatible API)
+                         │ IMAPS/SMTPS       │ Prisma Accelerate       │ (built in)
                          ▼                   ▼                         ▼
-                   MilesWeb mail       MilesWeb MySQL       Archive store: Vault bucket + transfer bucket
-                                                            (provider TBD, §3.4; not AWS)
+                   MilesWeb mail       MilesWeb MySQL       Netlify Blobs: temporary attachment
+                                                            chunks only (auto-cleaned after 24 h)
                    Master encryption key: Netlify secret environment variable (§3.3)
 ```
 
@@ -62,8 +63,8 @@ Browser ──HTTPS──► Netlify  (mail.matiumtech.com)
 * **Open a folder:** read the cached list from MySQL instantly, then run a quick incremental sync. If the server supports CONDSTORE/QRESYNC, one round trip fetches changes since the last sync. The list updates when it returns.
 * **Near-real-time:** while a tab is visible, the browser asks for changes every **~30–60 s**. That call checks the folder's status on the server and fetches only new or changed messages. No IDLE in v1.
 * **Initial sync / backfill:** a background function syncs the newest ~2,000 messages per folder in chunks, saves its progress in MySQL, and re-invokes itself until done.
-* **Open a message:** fetch and parse the body on demand, sanitise it, and return it. Attachments go to the transfer bucket (objects auto-expire after 1 day) and come back as a 60-second presigned link.
-* **Send:** build the message once, send it over SMTP, and save a copy to Sent. Large attachments are uploaded to the transfer bucket first, via presigned PUT, and validated server-side before sending.
+* **Open a message:** fetch and parse the body on demand, sanitise it, and return it. Attachments are downloaded separately (§3.5).
+* **Send (outbox):** "Send" stores the message in an outbox row and returns immediately. A background function builds the MIME once, sends it over SMTP, saves a copy to Sent, and reports the status (sent / failed with reason). That avoids the ~10 s synchronous timeout for big messages, and makes a short "Undo send" window easy to add.
 * **Connection etiquette:** each function uses one IMAP connection with short timeouts. Only one sync per mailbox runs at a time (a lock row in MySQL). Retries stop immediately on authentication failure (`NEEDS_REAUTH`), which protects against MilesWeb's lockouts.
 
 ### 3.2 Jobs, locks and rate limits without Redis
@@ -96,17 +97,20 @@ mailbox password  ── stored as ciphertext + iv + authTag
 * **What we lose vs KMS:** no hardware-backed key, no per-decrypt audit trail from a cloud provider, and revocation means rotating the key rather than flipping a permission. We log credential-use counts per mailbox in our own audit log, and anyone with Netlify admin access can read the key, so keep that team very small and protected with 2FA.
 * **Optional later:** an external secrets/KMS service (e.g. HashiCorp Vault, Infisical) behind the same `KeyProvider` interface.
 
-### 3.4 Archive storage without AWS S3
+### 3.4 Archiving: deferred
 
-The Vault needs: durability (it becomes the only copy once originals are removed), large objects, short-lived download/upload links (to keep big attachments off Netlify functions), versioning or deletion protection, and cheap storage.
+Not in v1. No archive storage provider, no Vault tables, no archive jobs. What v1 still does about the 5 GB limit:
 
-| Option | Fit | Notes |
-|---|---|---|
-| **S3-compatible provider**, e.g. Backblaze B2, Wasabi, Cloudflare R2, or a MilesWeb object-storage product if your account has one | ✅ **Recommended** | Standard S3 API (we use a generic S3 client library, pointed at the provider's endpoint, with no AWS account), presigned links, versioning / Object Lock on B2/Wasabi, low cost (e.g. B2 ≈ US$6 per TB-month). Separate from MilesWeb, so a hosting problem can't take the archive with it. |
-| **Netlify Blobs** (built into Netlify) | ⚠️ Possible, not recommended for the Vault | Zero extra accounts and objects up to 5 GB, but no public/presigned URLs (every download streams through a function and hits response limits), no versioning or deletion lock, no published durability figure, and it's tied to the Netlify site. Fine for small temporary data. |
-| Files on MilesWeb hosting disk | ❌ | Counts against the same hosting disk/inode limits we're trying to relieve, and it's on the same provider as the live mail. |
+* **Storage monitoring** stays: quota via IMAP `QUOTA` if available, otherwise computed usage with a manually entered limit; warnings at **70 %** and **85 %**.
+* Instead of "archive old mail", the warning links to **space-saving tools that only use the live mailbox**: sort/filter by size, "messages with attachments over 5 MB", "older than 12 months", and emptying Trash/Spam. All deletions go through the normal confirm/Trash flow.
+* The schema, job queue and `mail-core` streaming fetch are built so the Vault can be added later as a new module plus a migration, without reworking anything.
 
-**Provider-neutral verification** (some S3-compatible providers don't support SHA-256 upload checksums): compute SHA-256 while downloading from IMAP → upload with `Content-MD5` (the provider rejects corrupted uploads) → **read the object back and re-hash it** before marking it `VERIFIED`. Emails are small, so the extra read is cheap, and it's the strongest check anyway. The `ArchiveStore` interface keeps the provider swappable.
+### 3.5 Attachments within Netlify's limits
+
+* **Download, up to ~18 MB:** the function streams the decoded attachment straight from IMAP to the browser (streamed responses allow 20 MB / 60 s), with `Content-Disposition: attachment` and `nosniff`.
+* **Download, larger:** a **ranged download**. The browser requests the attachment in ~4 MB pieces; each request uses IMAP partial fetch (`BODY.PEEK[part]<offset.length>`), decodes that slice (offsets aligned to base64 boundaries) and returns it. The browser joins the pieces into one file. This covers the largest attachments MilesWeb is likely to accept.
+* **Upload (compose):** the browser splits files into ~4 MB chunks (under the ~6 MB request cap), each stored temporarily in **Netlify Blobs** under the draft's id. The outbox job reassembles them, checks type/size, and builds the message. A scheduled function deletes chunks older than 24 h. Blobs is only used here as scratch space, never as permanent storage.
+* **Size limit:** compose enforces MilesWeb's real SMTP message-size limit once known (base64 adds ~33 %, so a 25 MB limit means about 18 MB of attachments).
 
 ## 4. What v1 gives up vs. the full design, and what it gains
 
@@ -115,9 +119,9 @@ The Vault needs: durability (it becomes the only copy once originals are removed
 | New-mail latency | 30–60 s polling while the tab is open | Seconds (IDLE) |
 | Static IP for MilesWeb mail | ❌ (lockout risk managed by stopping on auth errors) | ✅ |
 | Password isolation from web tier | Functions can decrypt (mitigated) | Only the engine can decrypt |
-| Big archive batches | Chunked background functions (slower, but resumable) | Dedicated worker |
+| Archiving to separate storage | Deferred | Vault (original §6) |
 | Servers to run | **None** | One small VPS |
-| Monthly cost | Netlify plan + Accelerate Pro + archive storage (a few US$ per TB) | + ~US$10–20 for a VPS |
+| Monthly cost | Netlify plan + Accelerate Pro | + ~US$10–20 for a VPS (+ storage when archiving arrives) |
 
 ## 5. Upgrade path (designed in from day one)
 
@@ -131,7 +135,6 @@ netlify/functions thin wrappers: *-background.mts (jobs), scheduled refresh
 packages/db       Prisma (MySQL) + data-access layer with mailbox authorisation
 packages/mail-core ImapFlow / Nodemailer / mailparser, provider interface
 packages/jobs     job definitions + MySQL-backed queue/locks (portable to a worker later)
-packages/storage  ArchiveStore interface + S3-compatible implementation
 packages/crypto, contracts, sanitize, config
 ```
 
@@ -144,15 +147,16 @@ Turborepo stays. Netlify builds `apps/web` via `netlify.toml` (base directory + 
 2. ★ Does remote MySQL support **TLS/SSL**?
 3. ★ MySQL **or MariaDB**, and which version? (We need MySQL ≥ 8.0 or MariaDB ≥ 10.6 for `SKIP LOCKED` and JSON.)
 4. Limits: **max connections per user**, database size limit on your plan, and whether `CREATE TRIGGER` is permitted (for the append-only audit log).
-5. Does MilesWeb back up databases, and how often? (We'll also take our own nightly encrypted logical backup to the archive storage provider.)
+5. Does MilesWeb back up databases, and how often? (Our own extra backup destination will be decided together with archiving later.)
 6. Which **data-centre location** hosts your MilesWeb account (India / US / UK)? This decides the Netlify function region and the Accelerate pool region.
 
 **Netlify**
 7. Which **Netlify plan** (Free / Pro / Enterprise)? It affects the functions region setting, synchronous function timeout, background functions, and rate-limiting rules.
 
-**Storage / keys**
-8. ★ Which **archive storage provider**? Recommended: an S3-compatible one (Backblaze B2 or Wasabi), or tell me if MilesWeb offers object storage on your account. Or accept Netlify Blobs with its limitations.
-9. Who will have **admin access to the Netlify team**? Those people can read the master encryption key.
+**Keys / mail limits**
+8. Who will have **admin access to the Netlify team**? Those people can read the master encryption key.
+
+9. MilesWeb's **maximum message size** for SMTP (sets the attachment limit in compose).
 
 **Still open from earlier:** MilesWeb IMAP/SMTP host/port/security, the certificate hostname, a test mailbox, sending limits, the lockout policy, and shared mailboxes.
 
@@ -165,5 +169,7 @@ Turborepo stays. Netlify builds `apps/web` via `netlify.toml` (base directory + 
 - [Prisma Accelerate: Static IP](https://www.prisma.io/docs/accelerate/static-ip)
 - [Prisma blog: Accelerate static IP support](https://www.prisma.io/blog/accelerate-static-ip-support)
 - [Prisma Accelerate getting started](https://docs.prisma.io/docs/accelerate/getting-started)
+- [Netlify forum: function request body size](https://answers.netlify.com/t/maximum-body-size-for-netlify-function-post/22607)
+- [Netlify Functions API (streaming limits)](https://docs.netlify.com/functions/api/)
 - [Netlify Blobs vs Vercel Blob (Netlify knowledge base)](https://www.netlify.com/knowledge-base/netlify-blobs-vs-vercel-blob/)
 - [Vercel Blob vs Netlify Blobs (Vercel KB)](https://vercel.com/kb/guide/vercel-blob-vs-netlify-blobs)

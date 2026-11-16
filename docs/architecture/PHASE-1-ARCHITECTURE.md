@@ -2,6 +2,8 @@
 
 > Status: **Proposal — awaiting approval.** No application code has been written.
 > Companion file: [`schema.draft.prisma`](./schema.draft.prisma) (full draft database schema).
+>
+> **Revised:** hosting is now Cloudflare and the database is MySQL. See [`PHASE-1-REVISION-01-CLOUDFLARE-MYSQL.md`](./PHASE-1-REVISION-01-CLOUDFLARE-MYSQL.md), which overrides D8 and every Postgres-specific detail below (FTS, `pg_trgm`, RDS).
 
 ---
 

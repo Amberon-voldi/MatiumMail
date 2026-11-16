@@ -64,14 +64,16 @@ mPanel's own "Email client settings" page lists exactly these settings (IMAP 993
 | Host | 45.199.139.26:3306 (mPanel lists "MySQL IP… for external access"; DB host shows `localhost/45.199.139.26`) |
 | Reachable from the internet | **Yes**, port 3306 accepts connections |
 | TLS | **Supported** (TLS 1.3). Certificate is MariaDB's auto-generated **self-signed** `CN=MariaDB Server` |
-| Remote-host allowlist UI | **None** in mPanel (no "Remote MySQL" page; the create-user form has no host field) |
-| Existing | database `matiumte1_spinternational` (empty), **no users yet** |
+| Remote-host allowlist | **Per DB user**: mPanel → Databases → Users → Manage → "Remote access IP" (not shown in the create form). New users get only an internal host (`10.169.7.131`) |
+| App database | **`matiumte1_matiummail`** (created 2026-11-17) |
+| App user | **`matiumte1_matiummail`**: privileges **All** on `matiumte1_matiummail` only; `mysql_native_password`; remote hosts **`%`** (any) + `10.169.7.131`. Password is held by the owner (password manager), never in the repo |
+| Other | database `matiumte1_spinternational` (empty, no users) |
 | Privileges offered | All standard ones, **including `TRIGGER`** (enables the append-only audit log) |
 | Auth plugins | `mysql_native_password` (default) |
 
 Implications:
-* Netlify functions can probably connect directly, **if** users created in mPanel are allowed from remote hosts. That's the one thing to test (needs a DB user, see below).
-* TLS with a self-signed certificate: verification is done by **certificate pinning** (we store the server certificate's fingerprint), or by MariaDB 11.4's built-in zero-configuration TLS verification if the Node driver supports it. Decided in a Phase 2 spike. TLS is never turned off.
+* **Remote access confirmed working at the TLS layer** (handshake + pinned certificate succeeded from the owner's Mac; the first login was refused only because the host wasn't allowlisted). `%` was added because Netlify has no fixed IP. Accepted risk: the login is reachable from the internet. Mitigations: long random password, user limited to one database, app always uses TLS with a pinned certificate. (`REQUIRE SSL` can't be set from mPanel.)
+* TLS with a self-signed certificate: **certificate pinning**. The server certificate is a fixed one (`CN=MariaDB Server`, valid to **Nov 2036**, SHA-256 `94:F4:AA:D1:02:7A:BD:93:…:9D:38:30`). With the official `mariadb` driver (3.5.5), standard verification fails with `ER_SELF_SIGNED_NO_PWD` as expected; pinning (`ssl.ca` = the server cert + fingerprint check) completes the TLS handshake. TLS is never turned off.
 * MariaDB 11.4 meets the schema's needs: JSON functions, `FULLTEXT` on InnoDB, `SELECT … FOR UPDATE SKIP LOCKED`, descending indexes. (Prisma treats MariaDB through its MySQL provider; the MariaDB driver adapter is used.)
 
 ## 5. ⚠️ SMTP greets after ~23 seconds
@@ -100,7 +102,7 @@ Plan:
    ```bash
    node tools/probe-mail-server.mjs mail.spinternationalpvtltd.com --user info@spinternationalpvtltd.com
    ```
-2. **Remote DB access test:** create a DB user in mPanel (e.g. `matiumte1_mail`) with privileges on `matiumte1_spinternational`; then a one-line connection test from the Mac shows whether remote logins are allowed.
+2. ~~Remote DB access test~~: database + user created, `%` allowlisted. Re-run the connection test to confirm login (pending).
 3. **Register `matiumtech.com`**, or pick another hostname for the webmail.
 4. **Before switching noida.fit MX** (all in Cloudflare DNS):
    * update apex SPF to `v=spf1 ip4:45.199.139.26 include:relay.mailbaby.net include:_spf.mx.cloudflare.net ~all`

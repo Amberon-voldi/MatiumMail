@@ -1,6 +1,6 @@
 # Phase 1 — Revision 01: Cloudflare hosting + MySQL
 
-> Status: **Superseded by [Revision 02 (AWS Amplify)](./PHASE-1-REVISION-02-AWS-AMPLIFY.md).** Only §4 (MySQL changes) still applies.
+> Status: **Superseded by [Revision 03 (Netlify + MilesWeb MySQL)](./PHASE-1-REVISION-03-NETLIFY-MILESWEB-MYSQL.md).** Only §4 (MySQL changes) still applies.
 > Supersedes the hosting (D8) and database parts of [`PHASE-1-ARCHITECTURE.md`](./PHASE-1-ARCHITECTURE.md). Everything else (sync strategy, credential encryption, Vault workflow, security model) still applies.
 > Schema: [`schema.draft.prisma`](./schema.draft.prisma) now targets **MySQL 8.0+** and validates with Prisma 7.
 

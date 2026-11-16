@@ -1,6 +1,6 @@
 # Phase 1 — Revision 02: AWS Amplify Hosting + MySQL
 
-> Status: **Proposal — awaiting approval.**
+> Status: **Superseded by [Revision 03 (Netlify + MilesWeb MySQL)](./PHASE-1-REVISION-03-NETLIFY-MILESWEB-MYSQL.md).**
 > **Supersedes Revision 01 (Cloudflare).** The frontend is hosted on **AWS Amplify Hosting**; the database is **MySQL 8**.
 > Unchanged from [`PHASE-1-ARCHITECTURE.md`](./PHASE-1-ARCHITECTURE.md): IMAP sync strategy, credential envelope encryption, the S3 Vault workflow, the security model and the library choices for the mail side.
 > Schema: [`schema.draft.prisma`](./schema.draft.prisma) (MySQL, validates with Prisma 7) — unchanged by this revision.

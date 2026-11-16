@@ -1,6 +1,6 @@
 # Phase 1 — Revision 03: Netlify hosting + MySQL on MilesWeb
 
-> Status: **Proposal — awaiting approval. Current.**
+> Status: **Proposal — amended by [Revision 04 (free tiers, one user)](./PHASE-1-REVISION-04-FREE-TIER-SINGLE-USER.md).**
 > Supersedes Revision 02 (AWS Amplify) and Revision 01 (Cloudflare). The MySQL schema notes in [Revision 01 §4](./PHASE-1-REVISION-01-CLOUDFLARE-MYSQL.md#4-mysql-changes) still apply, and [`schema.draft.prisma`](./schema.draft.prisma) is MySQL / Prisma 7 with the archive tables removed.
 > Unchanged from [`PHASE-1-ARCHITECTURE.md`](./PHASE-1-ARCHITECTURE.md): library choices for the mail side, HTML sanitisation and the security model.
 > **No AWS is involved.** Key management is replaced as described in §3.3. (AWS S3 and KMS in the original document are superseded.)

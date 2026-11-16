@@ -3,7 +3,7 @@
 > Status: **Proposal — awaiting approval.** No application code has been written.
 > Companion file: [`schema.draft.prisma`](./schema.draft.prisma) (full draft database schema).
 >
-> **Revised:** hosting is now **Netlify**, the database is **MySQL on MilesWeb**, **no AWS is used** (no S3, no KMS), and **archiving (§6) is deferred** out of v1. See [`PHASE-1-REVISION-03-NETLIFY-MILESWEB-MYSQL.md`](./PHASE-1-REVISION-03-NETLIFY-MILESWEB-MYSQL.md) (current), which overrides D1/D6/D7/D8, all AWS (S3/KMS/IAM) details, Redis/BullMQ and every Postgres-specific detail below. MySQL schema notes are in [Revision 01 §4](./PHASE-1-REVISION-01-CLOUDFLARE-MYSQL.md#4-mysql-changes).
+> **Revised:** hosting is now **Netlify**, the database is **MySQL on MilesWeb**, **no AWS is used** (no S3, no KMS), and **archiving (§6) is deferred** out of v1. See [`PHASE-1-REVISION-03-NETLIFY-MILESWEB-MYSQL.md`](./PHASE-1-REVISION-03-NETLIFY-MILESWEB-MYSQL.md) as amended by [`PHASE-1-REVISION-04-FREE-TIER-SINGLE-USER.md`](./PHASE-1-REVISION-04-FREE-TIER-SINGLE-USER.md) (free plans, one user), which overrides D1/D6/D7/D8, all AWS (S3/KMS/IAM) details, Redis/BullMQ and every Postgres-specific detail below. MySQL schema notes are in [Revision 01 §4](./PHASE-1-REVISION-01-CLOUDFLARE-MYSQL.md#4-mysql-changes).
 
 ---
 

@@ -3,7 +3,7 @@
 > Status: **Proposal — awaiting approval.** No application code has been written.
 > Companion file: [`schema.draft.prisma`](./schema.draft.prisma) (full draft database schema).
 >
-> **Revised:** hosting is now Cloudflare and the database is MySQL. See [`PHASE-1-REVISION-01-CLOUDFLARE-MYSQL.md`](./PHASE-1-REVISION-01-CLOUDFLARE-MYSQL.md), which overrides D8 and every Postgres-specific detail below (FTS, `pg_trgm`, RDS).
+> **Revised:** hosting is now **AWS Amplify** and the database is **MySQL 8**. See [`PHASE-1-REVISION-02-AWS-AMPLIFY.md`](./PHASE-1-REVISION-02-AWS-AMPLIFY.md) (current), which overrides D8, the web→database data path and every Postgres-specific detail below. MySQL schema notes are in [Revision 01 §4](./PHASE-1-REVISION-01-CLOUDFLARE-MYSQL.md#4-mysql-changes).
 
 ---
 

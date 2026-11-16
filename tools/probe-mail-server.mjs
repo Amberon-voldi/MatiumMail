@@ -24,7 +24,8 @@ import tls from "node:tls";
 import net from "node:net";
 import readline from "node:readline";
 
-const TIMEOUT_MS = 15_000;
+// MilesWeb's Postfix was measured delaying its SMTP greeting by ~23 s, so be generous.
+const TIMEOUT_MS = 60_000;
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -311,11 +312,13 @@ function parseEhlo(lines) {
 
 async function probeSmtpImplicit() {
   const out = { port: 465, security: "TLS" };
+  const t0 = Date.now();
   const { socket, cert } = await connectTlsDescribed(465);
   out.certificate = cert;
   const reader = new LineReader(socket);
   try {
     out.greeting = (await smtpResponse(reader)).lines.join(" ");
+    out.greetingDelayMs = Date.now() - t0;
     socket.write("EHLO probe.invalid\r\n");
     out.extensions = parseEhlo((await smtpResponse(reader)).lines);
     socket.write("QUIT\r\n");
@@ -328,11 +331,13 @@ async function probeSmtpImplicit() {
 
 async function probeSmtpStartTls() {
   const out = { port: 587, security: "STARTTLS" };
+  const t0 = Date.now();
   const plain = await connectPlain(587);
   const reader = new LineReader(plain);
   let secure;
   try {
     out.greeting = (await smtpResponse(reader)).lines.join(" ");
+    out.greetingDelayMs = Date.now() - t0;
     plain.write("EHLO probe.invalid\r\n");
     const before = parseEhlo((await smtpResponse(reader)).lines);
     out.extensionsBeforeTls = before;
@@ -398,6 +403,7 @@ report.summary = {
   smtp465CertificateValidForHost: report.smtp465.certificate?.verified ?? false,
   smtp587StartTlsOffered: report.smtp587.startTlsOffered ?? false,
   smtpMaxMessageBytes: sizeExt ? Number(sizeExt.split(/\s+/)[1]) : null,
+  smtpGreetingDelayMs: report.smtp465.greetingDelayMs ?? report.smtp587.greetingDelayMs ?? null,
   imapLogin: report.imap.login ?? "not attempted (no --user)",
 };
 

@@ -1,6 +1,7 @@
 # Phase 1 — Revision 04: free tiers, one user
 
 > Status: **Proposal — awaiting approval. Current.** Amends [Revision 03](./PHASE-1-REVISION-03-NETLIFY-MILESWEB-MYSQL.md); everything there still applies unless changed here.
+> **Verified infrastructure facts (MariaDB 11.4, mail server, DNS, the 23 s SMTP greeting): [`MAIL-SERVERS.md`](./MAIL-SERVERS.md).**
 > Constraints: **Netlify Free plan**, **every other service on a free plan**, MilesWeb hosting (paid) provides mail + MySQL, **one user** (a teammate), possibly with several mailboxes.
 
 ## 1. What changes

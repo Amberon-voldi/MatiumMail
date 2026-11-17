@@ -3,6 +3,7 @@
 // app's variables into .env.production (inside the build output; .env* is
 // gitignored). Values are JSON-quoted and "$" escaped so Next's dotenv
 // expansion can't alter passwords. Values are never printed.
+import { X509Certificate } from "node:crypto";
 import { appendFileSync } from "node:fs";
 
 const REQUIRED = [
@@ -28,6 +29,16 @@ if (missing.length) {
 if (!/^https:\/\/[^/\s]+\/?$/.test(process.env.APP_URL)) {
   console.error("APP_URL must be the site's https:// address, e.g. https://webmail.example.com");
   process.exit(1);
+}
+// Same check as src/server/db.ts: a truncated paste otherwise only fails at runtime.
+if (process.env.DB_TLS === "pinned") {
+  try {
+    new X509Certificate(Buffer.from(process.env.DB_TLS_CA_PEM_BASE64, "base64").toString("utf8"));
+  } catch {
+    const n = process.env.DB_TLS_CA_PEM_BASE64.length;
+    console.error(`DB_TLS_CA_PEM_BASE64 is not a valid base64-encoded PEM certificate (${n} characters; was it cut off when pasted?)`);
+    process.exit(1);
+  }
 }
 
 // Quote so Next's dotenv parser returns the value byte-for-byte:

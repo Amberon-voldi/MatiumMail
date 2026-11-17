@@ -59,9 +59,17 @@ function createClient(): PrismaClient {
 }
 
 // Reuse one client per server instance (and across hot reloads in development).
-const globalForPrisma = globalThis as unknown as { __matiumPrisma?: PrismaClient };
+// The cache is keyed on the connection settings, so editing `.env` during
+// `next dev` builds a fresh client instead of reusing one aimed at the old DB.
+const globalForPrisma = globalThis as unknown as { __matiumPrisma?: { key: string; client: PrismaClient } };
 
 export function db(): PrismaClient {
-  globalForPrisma.__matiumPrisma ??= createClient();
-  return globalForPrisma.__matiumPrisma;
+  const e = env();
+  const key = [e.DB_HOST, e.DB_PORT, e.DB_USER, e.DB_NAME, e.DB_TLS, e.DB_TLS_CA_PEM_BASE64 ?? ""].join("|");
+  const cached = globalForPrisma.__matiumPrisma;
+  if (cached?.key === key) return cached.client;
+  if (cached) void cached.client.$disconnect().catch(() => {});
+  const client = createClient();
+  globalForPrisma.__matiumPrisma = { key, client };
+  return client;
 }

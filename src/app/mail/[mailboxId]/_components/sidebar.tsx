@@ -84,7 +84,7 @@ export function Sidebar({
       {mail.can.send ? (
         <div className="px-3 pb-3">
           <Button
-            className="h-11 w-full justify-start gap-2.5 rounded-2xl bg-brand px-4 text-[15px] font-semibold text-brand-foreground shadow-sm shadow-brand/25 hover:bg-brand/90 md:h-10 md:text-sm"
+            className="h-11 w-full justify-start gap-2.5 rounded-2xl bg-brand px-4 text-[15px] font-semibold text-brand-foreground shadow-sm shadow-brand/25 transition-[transform,box-shadow,background-color] duration-200 hover:bg-brand/90 hover:shadow-md motion-safe:hover:-translate-y-0.5 motion-safe:active:translate-y-0 md:h-10 md:text-sm"
             onClick={() => {
               mail.openComposer({ mode: "new" });
               onNavigate();
@@ -99,7 +99,7 @@ export function Sidebar({
         {folders.length === 0 ? (
           <div className="space-y-1.5 px-2 pt-1" aria-hidden="true">
             {Array.from({ length: 6 }, (_, i) => (
-              <div key={i} className="h-8 animate-pulse rounded-lg bg-muted" />
+              <div key={i} className="h-8 mm-skeleton rounded-lg" />
             ))}
           </div>
         ) : null}
@@ -144,7 +144,13 @@ function FolderItem({ folder: f, active, onClick }: { folder: FolderDTO; active:
         <Icon className={cn("size-[18px] shrink-0", active ? "text-brand" : "text-muted-foreground")} aria-hidden="true" />
         <span className="min-w-0 flex-1 truncate">{f.name}</span>
         {count > 0 ? (
-          <span className={cn("text-xs tabular-nums", active || f.role === "INBOX" ? "font-semibold text-brand" : "text-muted-foreground")}>
+          <span
+            key={count}
+            className={cn(
+              "text-xs tabular-nums duration-300 motion-safe:animate-in motion-safe:zoom-in-75",
+              active || f.role === "INBOX" ? "font-semibold text-brand" : "text-muted-foreground",
+            )}
+          >
             {count > 999 ? "999+" : count}
           </span>
         ) : null}

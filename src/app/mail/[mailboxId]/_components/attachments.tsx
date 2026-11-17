@@ -86,7 +86,7 @@ export function AttachmentList({ messageId, attachments }: { messageId: string; 
             const progress = busy[a.part];
             const previewable = PREVIEWABLE.has(a.contentType) && !a.chunked;
             return (
-              <li key={a.part} className="flex min-w-0 items-center gap-3 rounded-xl border bg-card p-2.5 pr-1.5">
+              <li key={a.part} className="flex min-w-0 items-center gap-3 rounded-xl border bg-card p-2.5 pr-1.5 transition-[transform,box-shadow] duration-200 hover:shadow-md motion-safe:hover:-translate-y-0.5">
                 <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-brand-soft text-brand">
                   <Icon className="size-5" aria-hidden="true" />
                 </span>

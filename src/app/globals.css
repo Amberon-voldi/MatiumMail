@@ -161,8 +161,78 @@
   scrollbar-color: color-mix(in oklch, var(--foreground) 18%, transparent) transparent;
 }
 
+/* ── Motion ──────────────────────────────────────────────────────────────────
+   Transform/opacity only (cheap to animate). Everything is switched off for
+   people who ask their system for reduced motion (see the end of the file). */
+
 @keyframes mm-shimmer {
   100% {
     transform: translateX(100%);
+  }
+}
+@keyframes mm-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes mm-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+@keyframes mm-drift {
+  from {
+    transform: translate3d(-6%, -4%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(6%, 5%, 0) scale(1.15);
+  }
+}
+
+/* Enter from below; set --i on siblings for a stagger. */
+@utility animate-fade-up {
+  animation: mm-fade-up 340ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 28ms);
+}
+@utility animate-float {
+  animation: mm-float 5s ease-in-out infinite;
+}
+@utility animate-drift {
+  animation: mm-drift 18s ease-in-out infinite alternate;
+}
+
+/* Loading placeholder with a light sweeping across it. */
+@utility mm-skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--muted);
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, color-mix(in oklch, var(--background) 55%, transparent), transparent);
+    animation: mm-shimmer 1.4s ease-in-out infinite;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

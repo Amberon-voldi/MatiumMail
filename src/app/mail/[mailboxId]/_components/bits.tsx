@@ -36,7 +36,7 @@ export function IconButton({
       size="icon"
       aria-label={label}
       title={label}
-      className={cn("size-10 rounded-full text-muted-foreground hover:text-foreground md:size-8 md:rounded-lg", className)}
+      className={cn("size-10 rounded-full text-muted-foreground transition-[color,background-color,transform] hover:text-foreground motion-safe:active:scale-90 md:size-8 md:rounded-lg", className)}
       {...props}
     >
       {children}
@@ -81,14 +81,14 @@ export function ListSkeleton({ rows = 8 }: { rows?: number }) {
     <div aria-hidden="true" className="divide-y">
       {Array.from({ length: rows }, (_, i) => (
         <div key={i} className="flex gap-3 px-4 py-3.5">
-          <div className="size-9 shrink-0 animate-pulse rounded-full bg-muted" />
+          <div className="size-9 shrink-0 mm-skeleton rounded-full" />
           <div className="min-w-0 flex-1 space-y-2 pt-0.5">
             <div className="flex justify-between gap-6">
-              <div className="h-3.5 w-1/3 animate-pulse rounded bg-muted" />
-              <div className="h-3 w-10 animate-pulse rounded bg-muted" />
+              <div className="h-3.5 w-1/3 mm-skeleton rounded" />
+              <div className="h-3 w-10 mm-skeleton rounded" />
             </div>
-            <div className="h-3 w-3/4 animate-pulse rounded bg-muted" />
-            <div className="h-3 w-1/2 animate-pulse rounded bg-muted/70" />
+            <div className="h-3 w-3/4 mm-skeleton rounded" />
+            <div className="h-3 w-1/2 mm-skeleton rounded opacity-70" />
           </div>
         </div>
       ))}

@@ -81,10 +81,10 @@ function MailSkeleton() {
   return (
     <div className="flex h-dvh overflow-hidden" aria-busy="true" aria-label="Loading mail">
       <div className="hidden w-64 shrink-0 flex-col gap-2 border-r bg-sidebar p-4 md:flex xl:w-72">
-        <div className="h-8 w-36 animate-pulse rounded-lg bg-muted" />
-        <div className="mt-3 h-10 animate-pulse rounded-2xl bg-muted" />
+        <div className="h-8 w-36 mm-skeleton rounded-lg" />
+        <div className="mt-3 h-10 mm-skeleton rounded-2xl" />
         {Array.from({ length: 6 }, (_, i) => (
-          <div key={i} className="h-8 animate-pulse rounded-lg bg-muted/70" />
+          <div key={i} className="h-8 mm-skeleton rounded-lg opacity-70" />
         ))}
       </div>
       <div className="flex w-full flex-col border-r md:w-[360px] lg:w-[400px] xl:w-[440px]">
@@ -92,10 +92,10 @@ function MailSkeleton() {
         <div className="space-y-px">
           {Array.from({ length: 9 }, (_, i) => (
             <div key={i} className="flex gap-3 px-4 py-3.5">
-              <div className="size-9 shrink-0 animate-pulse rounded-full bg-muted" />
+              <div className="size-9 shrink-0 mm-skeleton rounded-full" />
               <div className="flex-1 space-y-2">
-                <div className="h-3.5 w-1/3 animate-pulse rounded bg-muted" />
-                <div className="h-3 w-3/4 animate-pulse rounded bg-muted" />
+                <div className="h-3.5 w-1/3 mm-skeleton rounded" />
+                <div className="h-3 w-3/4 mm-skeleton rounded" />
               </div>
             </div>
           ))}

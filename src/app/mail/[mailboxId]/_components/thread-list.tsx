@@ -130,7 +130,11 @@ export function ThreadList({ listKey, query, initialState }: { listKey: string; 
             )}
             <h1 className="min-w-0 flex-1 truncate px-1 text-base font-semibold tracking-tight">
               {title}
-              {unread > 0 ? <span className="ml-2 text-sm font-medium text-brand tabular-nums">{unread}</span> : null}
+              {unread > 0 ? (
+                <span key={unread} className="ml-2 inline-block text-sm font-medium text-brand tabular-nums duration-300 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-75">
+                  {unread}
+                </span>
+              ) : null}
             </h1>
             {folder && DISPOSABLE.has(role) && !searching && threads.length > 0 && mail.can.organise ? (
               <EmptyFolderButton folder={folder} />
@@ -183,9 +187,10 @@ export function ThreadList({ listKey, query, initialState }: { listKey: string; 
           )
         ) : (
           <ul aria-label={title} className="divide-y divide-border/70">
-            {threads.map((t) => (
+            {threads.map((t, i) => (
               <ThreadRow
                 key={t.key}
+                index={i}
                 thread={t}
                 active={nav.threadId !== null && t.ids.includes(nav.threadId)}
                 selected={selected.has(t.key)}
@@ -302,8 +307,10 @@ function ThreadRow({
   onToggle,
   role,
   showFolder,
+  index,
 }: {
   thread: ThreadSummaryDTO;
+  index: number;
   active: boolean;
   selected: boolean;
   selecting: boolean;
@@ -331,7 +338,18 @@ function ThreadRow({
   };
 
   return (
-    <li className="relative overflow-hidden" {...swipe.containerProps}>
+    <li
+      className="grid transition-[grid-template-rows,opacity] duration-200 ease-out"
+      style={
+        {
+          gridTemplateRows: t.leaving ? "0fr" : "1fr",
+          opacity: t.leaving ? 0 : 1,
+          pointerEvents: t.leaving ? "none" : undefined,
+          "--i": index < 14 ? index : 0,
+        } as React.CSSProperties
+      }
+    >
+      <div className="relative min-h-0 overflow-hidden motion-safe:animate-fade-up" {...swipe.containerProps}>
       {swipe.background}
       <div
         role="button"
@@ -434,6 +452,7 @@ function ThreadRow({
           </div>
         ) : null}
       </div>
+      </div>
     </li>
   );
 }
@@ -468,11 +487,11 @@ function StarButton({ thread: t }: { thread: ThreadSummaryDTO }) {
         mail.setStar(t.ids, !t.flagged);
       }}
       className={cn(
-        "-my-1 -mr-1 inline-flex size-7 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-muted",
+        "-my-1 -mr-1 inline-flex size-7 shrink-0 items-center justify-center rounded-full transition-[color,background-color,transform] duration-300 ease-[cubic-bezier(.34,1.56,.64,1)] hover:bg-muted active:scale-75",
         t.flagged ? "text-amber-500" : "text-muted-foreground/40 hover:text-muted-foreground",
       )}
     >
-      <Star className={cn("size-4", t.flagged && "fill-amber-400")} />
+      <Star className={cn("size-4 transition-[fill,transform] duration-300", t.flagged && "scale-110 fill-amber-400")} />
     </button>
   );
 }

@@ -83,6 +83,18 @@ export async function buildMime(
   return { raw, envelope: node.getEnvelope(), messageId: node.messageId() };
 }
 
+/** A public, fully-qualified name to greet the SMTP server with: the app's own host, else the sender's domain. */
+export function ehloName(fromAddress: string, appUrl = env().APP_URL): string {
+  try {
+    const host = new URL(appUrl).hostname;
+    if (host.includes(".") && !isIP(host) && !isLocalHost(host)) return host;
+  } catch {
+    /* fall through */
+  }
+  const domain = fromAddress.split("@")[1]?.toLowerCase();
+  return domain && domain.includes(".") ? domain : "localhost";
+}
+
 export async function sendMessage(auth: AuthorizedMailbox, msg: OutgoingMessage): Promise<SendResult> {
   if (!roleAllows(auth.role, "send")) throw new Error("Not permitted: send");
   const conn = await loadMailboxConnection(auth.mailboxId);
@@ -114,6 +126,9 @@ export async function sendMessage(auth: AuthorizedMailbox, msg: OutgoingMessage)
       socket.once("connect", () => settle(null, socket));
       socket.once("error", (err) => settle(err, socket));
     },
+    // EHLO name. The default is the machine's hostname, which on serverless
+    // hosts is an internal name or bare IP — spam filters score that.
+    name: ehloName(conn.address),
     host: conn.smtp.host,
     port: conn.smtp.port,
     secure: conn.smtp.security === "TLS",

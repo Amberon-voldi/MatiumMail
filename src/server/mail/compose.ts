@@ -72,7 +72,7 @@ export const sendRequestSchema = z
 
 const isReply = (mode: SendRequest["mode"]) => mode === "reply" || mode === "replyAll";
 
-async function buildOutgoing(auth: AuthorizedMailbox, req: SendRequest): Promise<OutgoingMessage> {
+async function buildOutgoing(auth: AuthorizedMailbox, req: SendRequest, opts: { draft: boolean }): Promise<OutgoingMessage> {
   let html = sanitizeOutgoingHtml(req.html);
   const attachments: OutgoingAttachment[] = [];
 
@@ -169,7 +169,8 @@ async function buildOutgoing(auth: AuthorizedMailbox, req: SendRequest): Promise
     inReplyTo,
     references,
     attachments,
-    headers: req.draftKey ? { [DRAFT_HEADER]: req.draftKey } : undefined,
+    // Only saved drafts carry the composer's key; real mail gets no internal headers.
+    headers: opts.draft && req.draftKey ? { [DRAFT_HEADER]: req.draftKey } : undefined,
   };
 }
 
@@ -222,7 +223,7 @@ async function removeDrafts(
 
 export async function sendFromRequest(auth: AuthorizedMailbox, req: SendRequest): Promise<SendResult> {
   if (req.to.length + req.cc.length + req.bcc.length === 0) throw new SendError("Add at least one recipient.");
-  const msg = await buildOutgoing(auth, req);
+  const msg = await buildOutgoing(auth, req, { draft: false });
   const result = await sendMessage(auth, msg);
   // Housekeeping after a successful send never turns it into a failure.
   await Promise.allSettled([
@@ -246,7 +247,7 @@ export async function saveDraft(auth: AuthorizedMailbox, req: SendRequest): Prom
     select: { path: true },
   });
   if (!drafts) throw new SendError("This mailbox has no Drafts folder.");
-  const msg = await buildOutgoing(auth, req);
+  const msg = await buildOutgoing(auth, req, { draft: true });
   const conn = await loadMailboxConnection(auth.mailboxId);
   const { raw } = await buildMime(conn, msg, { keepBcc: true });
   const appended = await withImap(auth.mailboxId, (client) => client.append(drafts.path, raw, ["\\Draft", "\\Seen"]));

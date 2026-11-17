@@ -40,6 +40,8 @@ export type ThreadSummaryDTO = {
   answered: boolean;
   draft: boolean;
   hasAttachments: boolean;
+  /** Client-only: the row is animating out after an archive/delete. */
+  leaving?: boolean;
 };
 
 export type ThreadPageDTO = {

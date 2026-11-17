@@ -303,7 +303,8 @@ export function Composer({ init, onClose }: { init: ComposerInit; onClose: () =>
       aria-label={title}
       onKeyDown={onKeyDown}
       className={cn(
-        "fixed z-40 flex animate-in flex-col overflow-hidden border bg-background shadow-2xl fade-in-0 slide-in-from-bottom-4",
+        "fixed z-40 flex flex-col overflow-hidden border bg-background shadow-2xl duration-300 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-bottom-6 motion-safe:zoom-in-95",
+        "md:transition-[width,height,top,right,bottom,left,border-radius] md:ease-[cubic-bezier(.2,.8,.2,1)]",
         // Phones: full screen. Desktop: docked window, minimised bar, or large window.
         "inset-0 md:inset-auto",
         minimized
@@ -508,7 +509,7 @@ export function Composer({ init, onClose }: { init: ComposerInit; onClose: () =>
               {/* Bottom bar (desktop) */}
               <div className="hidden shrink-0 items-center gap-1 border-t px-3 py-2 md:flex">
                 <Button
-                  className="h-9 gap-2 rounded-full bg-brand px-5 text-brand-foreground hover:bg-brand/90"
+                  className="h-9 gap-2 rounded-full bg-brand px-5 text-brand-foreground shadow-sm shadow-brand/30 transition-[transform,box-shadow,background-color] hover:bg-brand/90 hover:shadow-md motion-safe:active:scale-95"
                   onClick={() => void send()}
                   disabled={sending}
                   title="Send (Ctrl+Enter)"

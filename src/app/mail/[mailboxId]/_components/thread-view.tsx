@@ -150,7 +150,7 @@ export function ThreadView({ messageId, onClose }: { messageId: string; onClose:
 
           <ol className="mt-4 space-y-2.5">
             {messages.map((m, i) => (
-              <li key={m.id}>
+              <li key={m.id} className="motion-safe:animate-fade-up" style={{ "--i": Math.min(i, 8) } as React.CSSProperties}>
                 <MessageCard message={m} expanded={isExpanded(m, i, messages.length)} onToggle={() => toggle(m.id)} />
               </li>
             ))}
@@ -221,20 +221,20 @@ function ReaderBar({ onClose, children }: { onClose: () => void; children?: Reac
 function ReaderSkeleton() {
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 px-4 py-6 md:px-6" aria-hidden="true">
-      <div className="h-6 w-2/3 animate-pulse rounded bg-muted" />
+      <div className="h-6 w-2/3 mm-skeleton rounded" />
       <div className="rounded-2xl border p-4">
         <div className="flex gap-3">
-          <div className="size-10 animate-pulse rounded-full bg-muted" />
+          <div className="size-10 mm-skeleton rounded-full" />
           <div className="flex-1 space-y-2 pt-1">
-            <div className="h-3.5 w-40 animate-pulse rounded bg-muted" />
-            <div className="h-3 w-24 animate-pulse rounded bg-muted" />
+            <div className="h-3.5 w-40 mm-skeleton rounded" />
+            <div className="h-3 w-24 mm-skeleton rounded" />
           </div>
         </div>
         <div className="mt-6 space-y-2.5">
-          <div className="h-3 w-full animate-pulse rounded bg-muted" />
-          <div className="h-3 w-11/12 animate-pulse rounded bg-muted" />
-          <div className="h-3 w-4/5 animate-pulse rounded bg-muted" />
-          <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
+          <div className="h-3 w-full mm-skeleton rounded" />
+          <div className="h-3 w-11/12 mm-skeleton rounded" />
+          <div className="h-3 w-4/5 mm-skeleton rounded" />
+          <div className="h-3 w-2/3 mm-skeleton rounded" />
         </div>
       </div>
     </div>
@@ -249,7 +249,7 @@ function MessageCard({ message: m, expanded, onToggle }: { message: ThreadMessag
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-3 rounded-2xl border bg-card px-3 py-3 text-left transition-colors hover:bg-muted/40 md:px-4"
+        className="flex w-full items-center gap-3 rounded-2xl border bg-card px-3 py-3 text-left transition-[background-color,transform,box-shadow] duration-200 hover:bg-muted/40 hover:shadow-sm motion-safe:hover:-translate-y-px md:px-4"
       >
         <Avatar addr={m.from} className="size-8 text-xs" />
         <span className="min-w-0 flex-1">
@@ -287,7 +287,7 @@ function ExpandedMessage({ message: m, onCollapse }: { message: ThreadMessageDTO
   const unsubscribe = b?.unsubscribe ?? null;
 
   return (
-    <article className="overflow-hidden rounded-2xl border bg-card shadow-[0_1px_2px_rgb(0_0_0/0.03)]">
+    <article className="overflow-hidden rounded-2xl border bg-card shadow-[0_1px_2px_rgb(0_0_0/0.03)] duration-300 motion-safe:animate-in motion-safe:fade-in-0">
       <header className="flex items-start gap-3 px-3 pt-3.5 md:px-4">
         <button type="button" onClick={onCollapse} aria-label="Collapse message" className="rounded-full">
           <Avatar addr={m.from} />
@@ -319,7 +319,7 @@ function ExpandedMessage({ message: m, onCollapse }: { message: ThreadMessageDTO
             {details ? <ChevronUp className="size-3.5 shrink-0" /> : <ChevronDown className="size-3.5 shrink-0" />}
           </button>
           {details ? (
-            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg bg-muted/50 p-2.5 text-xs">
+            <dl className="mt-2 grid duration-200 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-lg bg-muted/50 p-2.5 text-xs">
               <dt className="text-muted-foreground">From</dt>
               <dd className="break-all">{formatAddress(m.from)}</dd>
               {m.to.length ? (

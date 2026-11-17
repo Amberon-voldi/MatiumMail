@@ -163,6 +163,11 @@ export function MailApp(props: MailAppProps) {
 
   // ── Sync ─────────────────────────────────────────────────────────────────
   const syncingRef = useRef(false);
+  // Inbox unread count as last shown, to announce mail that arrives by sync.
+  const inboxUnreadRef = useRef<number | null>(null);
+  useEffect(() => {
+    inboxUnreadRef.current = inbox ? inbox.unread : null;
+  }, [inbox]);
   const syncNow = useCallback(
     async (scope?: string) => {
       if (syncingRef.current) return;
@@ -170,6 +175,12 @@ export function MailApp(props: MailAppProps) {
       setSyncing(true);
       try {
         const res = await api.sync(scope ?? navRef.current.folderId ?? "inbox");
+        const before = inboxUnreadRef.current;
+        const now = res.folders.find((f) => f.role === "INBOX")?.unread ?? 0;
+        if (before !== null && now > before && document.visibilityState === "visible") {
+          const added = now - before;
+          toast(`${added} new message${added === 1 ? "" : "s"}`, { id: "new-mail", description: "Just arrived in your Inbox." });
+        }
         setFolders(res.folders);
         setSyncError(null);
         setNeedsReauth(false);
@@ -281,7 +292,16 @@ export function MailApp(props: MailAppProps) {
         }
       }
       const conversations = (lists.get(currentKeyRef.current)?.threads ?? []).filter((t) => keySet.has(t.key)).length;
-      dropThreads(mailbox.id, keySet, n.q && n.all ? null : n.folderId);
+      // Let the rows fold away first, then drop them from every list.
+      const shown = lists.get(currentKeyRef.current);
+      if (shown) {
+        lists.set(currentKeyRef.current, {
+          ...shown,
+          threads: shown.threads.map((t) => (keySet.has(t.key) ? { ...t, leaving: true } : t)),
+        });
+      }
+      const fromFolder = n.q && n.all ? null : n.folderId;
+      setTimeout(() => dropThreads(mailbox.id, keySet, fromFolder), 220);
       const op: ActionOp =
         typeof target === "object"
           ? { op: "move", ids, folderId: target.folderId }
@@ -421,7 +441,7 @@ export function MailApp(props: MailAppProps) {
         <section
           className={cn(
             "min-w-0 shrink-0 flex-col border-r md:flex md:w-[360px] lg:w-[400px] xl:w-[440px]",
-            nav.threadId ? "hidden" : "flex w-full",
+            nav.threadId ? "hidden" : "flex w-full max-md:motion-safe:animate-in max-md:motion-safe:fade-in-0",
           )}
         >
           <Banners online={online} needsReauth={needsReauth} syncError={syncError} onRetry={() => void syncNow()} mailbox={mailbox} />
@@ -548,8 +568,11 @@ function Banners({
 
 function ReaderPlaceholder({ unread }: { unread: number }) {
   return (
-    <div className="m-auto flex max-w-sm flex-col items-center px-6 text-center">
-      <Logo className="size-14 rounded-2xl opacity-90" />
+    <div className="m-auto flex max-w-sm flex-col items-center px-6 text-center motion-safe:animate-fade-up">
+      <div className="relative isolate">
+        <div aria-hidden="true" className="absolute inset-0 -z-10 scale-[1.8] rounded-full bg-brand/20 blur-2xl motion-safe:animate-pulse" />
+        <Logo className="size-14 rounded-2xl motion-safe:animate-float" />
+      </div>
       <p className="mt-5 text-base font-semibold tracking-tight">Select a conversation to read</p>
       <p className="mt-1.5 text-sm text-muted-foreground">
         {unread > 0 ? `You have ${unread} unread message${unread === 1 ? "" : "s"} in your Inbox.` : "Your Inbox is all caught up."}

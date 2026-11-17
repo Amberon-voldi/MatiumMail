@@ -54,11 +54,23 @@ in parallel — Server Actions would queue behind a slow sync).
 - **Composer**: rich text, reply / reply all / forward (with the original's attachments), drafts in
   the IMAP Drafts folder, autocomplete, local autosave.
 - **Phones**: one pane at a time, folder drawer, swipe a row to archive/mark read, pull to refresh;
-  installable (manifest + MatiumTech icons).
+  installable (manifest + MatiumTech icons). After sign-in, phones and tablets are offered "Add to
+  Home Screen" (Android: the browser's own install prompt; iOS: the Share → Add to Home Screen steps).
+  "Not now" hides it for two weeks; the account menu's "Install app" brings it back.
 - Keyboard shortcuts on desktop (`?` lists them). Older mail is fetched from the server on scroll.
 
-> **Deploying this version needs one migration** (`compose_uploads`, two new tables, additive):
-> `npm run db:migrate:remote`. Until it runs, everything works except attaching files in the composer.
+## Restoring an old Gmail export
+
+`tools/import-gmail-export.mjs` puts the messages of an "SP Mail" viewer export (`data/<account>.js`)
+back into their IMAP mailboxes, asking for each mailbox password (hidden). The export only has the
+text of each email and the names of its attachments, so restored mail is cleaned-up text with simple
+HTML, not the original design. Re-running it is safe; copies from an older version are replaced in
+place (same folder, read/starred kept).
+
+```bash
+node tools/import-gmail-export.mjs ~/Downloads/gmail-clone --dry-run   # what would go where
+node tools/import-gmail-export.mjs ~/Downloads/gmail-clone             # restore / update
+```
 
 ## Adding people and domains
 

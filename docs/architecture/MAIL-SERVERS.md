@@ -39,10 +39,11 @@ mPanel's own "Email client settings" page lists exactly these settings (IMAP 993
 
 ### `spinternationalpvtltd.com`: live
 * MX `0 mail.spinternationalpvtltd.com` → 45.199.139.26 (DNS only) ✅
-* SPF `v=spf1 ip4:45.199.139.26 +mx include:relay.mailbaby.net include:_spf.mx.cloudflare.net ~all` ✅ (MilesWeb relays outbound mail through MailBaby)
+* SPF `v=spf1 ip4:45.199.139.26 +mx include:relay.mailbaby.net ~all` ✅ (MilesWeb relays outbound mail through MailBaby)
 * DKIM `hostingcp._domainkey` (MilesWeb) ✅ · DMARC `p=quarantine` ✅
-* Leftovers that can be cleaned up later: Zoho verification + `zmail._domainkey`, Cloudflare Email Routing DKIM `cf2024-1`, Squarespace `_domainconnect`.
-* Mailbox: `info@spinternationalpvtltd.com` (5 GB, DKIM configured).
+* Cloudflare Email Routing **disabled 2026-11-18** (it used to forward info@, siddharth@ and ambuj@ to a personal Gmail); its `cf2024-1` DKIM and SPF include were removed.
+* Leftovers that can be cleaned up later: Zoho verification + `zmail._domainkey`, Squarespace `_domainconnect`.
+* Mailboxes: `info@`, `siddharth@`, `ambuj@` (5 GB each). Their pre-November Gmail history can be restored with `tools/import-gmail-export.mjs`.
 
 ### `noida.fit`: switched to MilesWeb (2026-11-18)
 * Cloudflare Email Routing **disabled and its records removed** (the `route1/2/3.mx.cloudflare.net` MX, `cf2024-1` DKIM and Cloudflare-only SPF). Nothing is forwarded any more.

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MessageStructureObject } from "imapflow";
 import {
+  expungedIds,
   flagColumns,
   hasAttachments,
   normalizeMessageId,
@@ -68,6 +69,24 @@ describe("hasAttachments", () => {
     expect(hasAttachments(node({ type: "application/zip", parameters: { name: "a.zip" } }))).toBe(true);
     expect(hasAttachments(node({ type: "text/plain" }))).toBe(false);
     expect(hasAttachments(undefined)).toBe(false);
+  });
+});
+
+describe("expungedIds", () => {
+  const rows = [
+    { id: "a", uid: 1n },
+    { id: "b", uid: 2n },
+    { id: "c", uid: 3n },
+  ];
+
+  it("regression: never deletes messages inserted above the searched range", () => {
+    // Cache held only UID 1, we searched 1:1, then inserted UIDs 2 and 3.
+    expect(expungedIds(rows, 1, 1, [1])).toEqual([]);
+  });
+
+  it("reports cached UIDs inside the range that the server no longer has", () => {
+    expect(expungedIds(rows, 1, 3, [1, 3])).toEqual(["b"]);
+    expect(expungedIds(rows, 1, 3, [])).toEqual(["a", "b", "c"]);
   });
 });
 

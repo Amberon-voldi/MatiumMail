@@ -5,6 +5,7 @@ import { db } from "../db";
 import { withImap } from "./client";
 import { folderUnchanged, syncFolders, type SyncedFolder } from "./folders";
 import {
+  expungedIds,
   flagColumns,
   hasAttachments,
   normalizeMessageId,
@@ -145,12 +146,13 @@ async function syncFolderMessages(client: ImapFlow, mailboxId: string, folder: S
       const range = `${minUid}:${maxUid}`;
       const present = await client.search({ uid: range }, { uid: true });
       if (Array.isArray(present)) {
-        const onServer = new Set(present);
+        // Only rows inside the range we asked the server about — never the
+        // messages inserted a moment ago above the old max UID.
         const known = await p.messageMeta.findMany({
-          where: { folderId: folder.id, uidValidity },
+          where: { folderId: folder.id, uidValidity, uid: { gte: BigInt(minUid), lte: BigInt(maxUid) } },
           select: { id: true, uid: true, flags: true },
         });
-        const gone = known.filter((k) => !onServer.has(Number(k.uid))).map((k) => k.id);
+        const gone = expungedIds(known, minUid, maxUid, present);
         for (let i = 0; i < gone.length; i += 500) {
           await p.messageMeta.deleteMany({ where: { id: { in: gone.slice(i, i + 500) } } });
         }

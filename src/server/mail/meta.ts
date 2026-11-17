@@ -76,6 +76,28 @@ export function sameFlags(a: unknown, b: Iterable<string>): boolean {
   return left.length === right.length && left.every((x, i) => x === right[i]);
 }
 
+/**
+ * Cached rows that were expunged on the server.
+ *
+ * Only rows whose UID lies inside the range the server was actually asked
+ * about ([min, max]) can be judged — anything outside it (e.g. messages
+ * inserted moments ago, above the old max) must not be treated as deleted.
+ */
+export function expungedIds(
+  known: Array<{ id: string; uid: bigint | number }>,
+  min: number,
+  max: number,
+  presentOnServer: Iterable<number>,
+): string[] {
+  const present = new Set(presentOnServer);
+  return known
+    .filter((k) => {
+      const uid = Number(k.uid);
+      return uid >= min && uid <= max && !present.has(uid);
+    })
+    .map((k) => k.id);
+}
+
 export function toDate(value?: Date | string | null): Date | null {
   if (!value) return null;
   const d = value instanceof Date ? value : new Date(value);

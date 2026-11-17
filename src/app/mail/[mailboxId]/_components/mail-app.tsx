@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { KeyRound, PenSquare, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import type { ActionOp, FolderDTO, MailPreferences, ThreadMessageDTO, ThreadPageDTO } from "@/lib/mail-types";
+import { InstallPrompt } from "@/components/install-prompt";
 import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -475,6 +476,9 @@ export function MailApp(props: MailAppProps) {
         ) : null}
 
         {composer ? <Composer key={composer.id} init={composer} onClose={() => setComposer(null)} /> : null}
+
+        {/* Phones and tablets: offer "Add to Home Screen" once signed in */}
+        <InstallPrompt suppressed={composer !== null || drawer} />
 
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
         <ShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />

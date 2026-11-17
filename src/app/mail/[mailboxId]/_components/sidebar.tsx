@@ -17,12 +17,14 @@ import {
   Plus,
   Send,
   Settings,
+  Smartphone,
   Star,
   Trash2,
   Users,
 } from "lucide-react";
 import { signOutAction } from "@/app/actions/auth";
 import type { FolderDTO, FolderRole } from "@/lib/mail-types";
+import { openInstallPrompt, useCanInstall } from "@/components/install-prompt";
 import { Wordmark } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import {
@@ -120,7 +122,16 @@ export function Sidebar({
         ) : null}
       </nav>
 
-      <AccountMenu mailboxes={mailboxes} accounts={accounts} onOpenSettings={onOpenSettings} onOpenShortcuts={onOpenShortcuts} />
+      <AccountMenu
+        mailboxes={mailboxes}
+        accounts={accounts}
+        onOpenSettings={onOpenSettings}
+        onOpenShortcuts={onOpenShortcuts}
+        onInstall={() => {
+          onNavigate();
+          openInstallPrompt();
+        }}
+      />
     </div>
   );
 }
@@ -164,13 +175,16 @@ function AccountMenu({
   accounts,
   onOpenSettings,
   onOpenShortcuts,
+  onInstall,
 }: {
   mailboxes: OtherMailbox[];
   accounts: SignedInAccount[];
   onOpenSettings: () => void;
   onOpenShortcuts: () => void;
+  onInstall: () => void;
 }) {
   const { mailbox } = useMail();
+  const canInstall = useCanInstall();
   const signOut = useRef<HTMLFormElement>(null);
   const me = { name: mailbox.displayName, address: mailbox.address };
   return (
@@ -210,6 +224,11 @@ function AccountMenu({
           <DropdownMenuItem onSelect={onOpenShortcuts} className="hidden md:flex">
             <Keyboard /> Keyboard shortcuts
           </DropdownMenuItem>
+          {canInstall ? (
+            <DropdownMenuItem onSelect={onInstall}>
+              <Smartphone /> Install app
+            </DropdownMenuItem>
+          ) : null}
           <DropdownMenuItem asChild>
             <Link href="/accounts">
               <Users /> Manage accounts

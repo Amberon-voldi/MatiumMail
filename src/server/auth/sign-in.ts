@@ -5,6 +5,7 @@ import { audit, defaultOrganizationId } from "../audit";
 import { sha256Hex } from "../crypto/tokens";
 import { sealSecret } from "../crypto/envelope";
 import { credentialKeyRing, mailboxCredentialContext } from "../crypto/keyring";
+import { invalidateMailboxConnection } from "../mail/client";
 import { verifyImapLogin } from "../mail/imap";
 import type { RequestContext } from "../request";
 import { consume, loginLimits, resetLimit } from "./rate-limit";
@@ -179,6 +180,8 @@ export async function signIn(raw: { email: unknown; password: unknown }, ctx: Re
     p.user.update({ where: { id: user.id }, data: { lastLoginAt: now } }),
   ]);
   await resetLimit(loginLimits.perAccount(emailHash).key);
+  // New credential version: drop any cached connection built from the old one.
+  invalidateMailboxConnection(mailbox.id);
 
   await audit({
     organizationId: user.organizationId,

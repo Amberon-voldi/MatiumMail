@@ -33,9 +33,18 @@ async function Mail({ params, searchParams }: Pick<PageProps<"/mail/[mailboxId]"
   const pick = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : undefined);
 
   const auth = await requireMailboxAccess(mailboxId, "read");
-  const [overview, folders] = await Promise.all([mailboxOverview(auth), listFolders(auth)]);
-  const folder = folders.find((f) => f.id === pick("folder")) ?? folders.find((f) => f.specialUse === "INBOX") ?? folders[0];
-  const { messages } = folder ? await listMessages(auth, folder.id) : { messages: [] };
+  // When the folder is in the URL, load its messages in parallel with the rest
+  // (listMessages is scoped to this mailbox, so a foreign id just returns []).
+  const requested = pick("folder");
+  const requestedOk = requested && z.uuid().safeParse(requested).success ? requested : undefined;
+  const [overview, folders, early] = await Promise.all([
+    mailboxOverview(auth),
+    listFolders(auth),
+    requestedOk ? listMessages(auth, requestedOk) : Promise.resolve(null),
+  ]);
+  const folder = folders.find((f) => f.id === requestedOk) ?? folders.find((f) => f.specialUse === "INBOX") ?? folders[0];
+  const { messages } =
+    early && folder?.id === requestedOk ? early : folder ? await listMessages(auth, folder.id) : { messages: [] };
   const selectedId = pick("message");
   const base = `/mail/${mailboxId}?folder=${folder?.id ?? ""}`;
 

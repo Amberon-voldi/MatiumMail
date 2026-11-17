@@ -129,6 +129,16 @@ export async function openMessage(
     },
   });
   if (!meta) throw new MessageNotFoundError();
+
+  // Re-opening (or re-rendering after an action) shouldn't hit the mail server
+  // again: parsed + sanitised bodies are cached briefly. Flags always come from
+  // the database row above, so read/star state is never stale.
+  const cacheKey = `${meta.id}:${meta.uidValidity}:${opts.allowRemoteImages ? 1 : 0}`;
+  const cached = bodyCache.get(cacheKey);
+  if (cached && cached.expires > Date.now()) {
+    return { ...cached.message, isSeen: meta.isSeen, isFlagged: meta.isFlagged };
+  }
+
   if (meta.sizeBytes > MAX_PARSE_BYTES) {
     throw new Error("This message is too large to display here (over 30 MB).");
   }
@@ -160,7 +170,7 @@ export async function openMessage(
   }
 
   const fmt = (v: typeof parsed.to) => (Array.isArray(v) ? v.map((x) => x.text).join(", ") : (v?.text ?? ""));
-  return {
+  const opened: OpenedMessage = {
     id: meta.id,
     subject: parsed.subject ?? "(no subject)",
     from: parsed.from?.text ?? "",
@@ -175,6 +185,20 @@ export async function openMessage(
     isSeen: meta.isSeen,
     isFlagged: meta.isFlagged,
   };
+  cacheBody(cacheKey, opened);
+  return opened;
+}
+
+// Small in-memory LRU of opened messages (per server instance).
+const BODY_TTL_MS = 10 * 60_000;
+const BODY_MAX = 100;
+const gb = globalThis as unknown as { __matiumBodies?: Map<string, { message: OpenedMessage; expires: number }> };
+const bodyCache = (gb.__matiumBodies ??= new Map());
+
+function cacheBody(key: string, message: OpenedMessage): void {
+  bodyCache.delete(key);
+  bodyCache.set(key, { message, expires: Date.now() + BODY_TTL_MS });
+  while (bodyCache.size > BODY_MAX) bodyCache.delete(bodyCache.keys().next().value!);
 }
 
 // ── Organising (IMAP first, then mirror into the cache) ─────────────────────

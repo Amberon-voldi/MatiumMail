@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, MailOpen, RefreshCw, Star, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { setFlagsAction, syncNowAction, trashAction } from "@/app/actions/mail";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -87,40 +88,41 @@ export function MessageActions({
   backHref: string;
 }) {
   const router = useRouter();
-  const [pending, start] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const act = (fn: () => Promise<{ ok: boolean; error?: string }>, after?: () => void) =>
-    start(async () => {
-      const res = await fn();
-      if (!res.ok) setError(res.error ?? "Something went wrong.");
-      else {
-        setError(null);
-        if (after) after();
-        else router.refresh();
-      }
+  const [, startRefresh] = useTransition();
+  // Optimistic: the UI changes immediately; the server catches up in the
+  // background and we only interrupt the user if it fails.
+  const [flagged, setFlagged] = useState(isFlagged);
+
+  const toggleStar = () => {
+    const next = !flagged;
+    setFlagged(next);
+    void setFlagsAction(mailboxId, [messageId], { flagged: next }).then((res) => {
+      if (!res.ok) {
+        setFlagged(!next);
+        toast.error(res.error);
+      } else startRefresh(() => router.refresh());
     });
+  };
+
+  const leaveThen = (fn: () => Promise<{ ok: boolean; error?: string }>, undoLabel: string) => {
+    router.push(backHref);
+    void fn().then((res) => {
+      if (!res.ok) toast.error(res.error ?? `Couldn't ${undoLabel}.`);
+      startRefresh(() => router.refresh());
+    });
+  };
 
   return (
     <div className="flex items-center gap-1">
-      {error ? <span className="mr-2 text-xs text-destructive">{error}</span> : null}
-      {pending ? <Loader2 className="mr-1 size-4 animate-spin text-muted-foreground" aria-hidden="true" /> : null}
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label={isFlagged ? "Unstar" : "Star"}
-        title={isFlagged ? "Unstar" : "Star"}
-        disabled={pending}
-        onClick={() => act(() => setFlagsAction(mailboxId, [messageId], { flagged: !isFlagged }))}
-      >
-        <Star className={cn(isFlagged && "fill-amber-400 text-amber-500")} />
+      <Button variant="ghost" size="icon" aria-label={flagged ? "Unstar" : "Star"} title={flagged ? "Unstar" : "Star"} onClick={toggleStar}>
+        <Star className={cn("transition-colors", flagged && "fill-amber-400 text-amber-500")} />
       </Button>
       <Button
         variant="ghost"
         size="icon"
         aria-label="Mark as unread"
         title="Mark as unread"
-        disabled={pending}
-        onClick={() => act(() => setFlagsAction(mailboxId, [messageId], { seen: false }), () => router.push(backHref))}
+        onClick={() => leaveThen(() => setFlagsAction(mailboxId, [messageId], { seen: false }), "mark as unread")}
       >
         <MailOpen />
       </Button>
@@ -129,8 +131,7 @@ export function MessageActions({
         size="icon"
         aria-label="Move to Trash"
         title="Move to Trash"
-        disabled={pending}
-        onClick={() => act(() => trashAction(mailboxId, [messageId]), () => router.push(backHref))}
+        onClick={() => leaveThen(() => trashAction(mailboxId, [messageId]), "move to Trash")}
       >
         <Trash2 />
       </Button>

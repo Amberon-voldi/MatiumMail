@@ -22,6 +22,8 @@ export function ComposeForm({
   backHref: string;
 }) {
   const [state, formAction, pending] = useActionState(action, {});
+  // Values from a failed attempt, so nothing typed is lost.
+  const v = state.values;
 
   if (state.sent) {
     return (
@@ -40,18 +42,19 @@ export function ComposeForm({
     <form action={formAction} className="mx-auto w-full max-w-3xl space-y-4 p-6">
       <p className="text-xs text-muted-foreground">From {from}</p>
       {defaults.inReplyTo ? <input type="hidden" name="inReplyTo" value={defaults.inReplyTo} /> : null}
-      <Field label="To" name="to" defaultValue={defaults.to} placeholder="name@example.com, another@example.com" autoFocus={!defaults.to} />
+      <Field label="To" name="to" defaultValue={v?.to ?? defaults.to} placeholder="name@example.com, another@example.com" autoFocus={!defaults.to} />
       <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Cc" name="cc" />
-        <Field label="Bcc" name="bcc" />
+        <Field label="Cc" name="cc" defaultValue={v?.cc} />
+        <Field label="Bcc" name="bcc" defaultValue={v?.bcc} />
       </div>
-      <Field label="Subject" name="subject" defaultValue={defaults.subject} autoFocus={Boolean(defaults.to)} />
+      <Field label="Subject" name="subject" defaultValue={v?.subject ?? defaults.subject} autoFocus={Boolean(defaults.to)} />
       <div className="space-y-2">
         <Label htmlFor="body">Message</Label>
         <textarea
           id="body"
           name="body"
           rows={14}
+          defaultValue={v?.body}
           className="w-full resize-y rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
         />
       </div>

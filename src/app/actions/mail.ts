@@ -94,23 +94,28 @@ const sendSchema = z
   })
   .refine((m) => m.to.length + m.cc.length + m.bcc.length > 0, { message: "Add at least one recipient." });
 
-export type SendState = { error?: string; sent?: boolean };
+export type SendValues = { to: string; cc: string; bcc: string; subject: string; body: string };
+/** On failure the submitted values come back so the form can keep them (React resets forms after actions). */
+export type SendState = { error?: string; sent?: boolean; values?: SendValues };
 
 export async function sendAction(mailboxId: string, _prev: SendState, form: FormData): Promise<SendState> {
   const auth = await requireMailboxAccess(uuid.parse(mailboxId), "send");
-  const parsed = sendSchema.safeParse({
+  const values: SendValues = {
     to: String(form.get("to") ?? ""),
     cc: String(form.get("cc") ?? ""),
     bcc: String(form.get("bcc") ?? ""),
     subject: String(form.get("subject") ?? ""),
     body: String(form.get("body") ?? ""),
+  };
+  const parsed = sendSchema.safeParse({
+    ...values,
     inReplyTo: form.get("inReplyTo") ? String(form.get("inReplyTo")) : undefined,
   });
-  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the message and try again." };
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the message and try again.", values };
 
   // Guard against runaway sending from a compromised session or a bug.
   const limit = await consume({ key: `send:${auth.mailboxId}`, max: 30, windowMs: 10 * 60_000, blockMs: 10 * 60_000 });
-  if (!limit.allowed) return { error: "Sending limit reached. Please wait a few minutes." };
+  if (!limit.allowed) return { error: "Sending limit reached. Please wait a few minutes.", values };
 
   try {
     const m = parsed.data;
@@ -125,6 +130,6 @@ export async function sendAction(mailboxId: string, _prev: SendState, form: Form
     });
     return { sent: true };
   } catch (err) {
-    return { error: failure(err).error };
+    return { error: failure(err).error, values };
   }
 }

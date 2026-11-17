@@ -1,5 +1,5 @@
 import "server-only";
-import { isIP } from "node:net";
+import { connect as netConnect, isIP, type Socket } from "node:net";
 import nodemailer from "nodemailer";
 import MailComposer from "nodemailer/lib/mail-composer";
 import { audit } from "../audit";
@@ -63,6 +63,29 @@ export async function sendMessage(auth: AuthorizedMailbox, msg: OutgoingMessage)
   const allowSelfSigned = env().allowSelfSignedLocalMail && isLocalHost(conn.smtp.host);
   const servername = conn.smtp.tlsServername || conn.smtp.host;
   const transport = nodemailer.createTransport({
+    // Nodemailer resolves hostnames with its own IPv4-first DNS lookup and then
+    // connects to the raw address, which fails on IPv6-only (NAT64) networks.
+    // Open the TCP connection with the OS resolver instead (like ImapFlow);
+    // Nodemailer still performs the TLS handshake/STARTTLS and verification.
+    getSocket: (_options, callback) => {
+      let settled = false;
+      const settle = (err: Error | null, socket?: Socket) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (err) {
+          socket?.destroy();
+          callback(err, false);
+        } else callback(null, { connection: socket });
+      };
+      const socket = netConnect({ host: conn.smtp.host, port: conn.smtp.port });
+      const timer = setTimeout(
+        () => settle(Object.assign(new Error("Connection timeout"), { code: "ETIMEDOUT" }), socket),
+        20_000,
+      );
+      socket.once("connect", () => settle(null, socket));
+      socket.once("error", (err) => settle(err, socket));
+    },
     host: conn.smtp.host,
     port: conn.smtp.port,
     secure: conn.smtp.security === "TLS",
@@ -73,7 +96,9 @@ export async function sendMessage(auth: AuthorizedMailbox, msg: OutgoingMessage)
       minVersion: "TLSv1.2",
       ...(isIP(servername) ? {} : { servername }),
     },
-    connectionTimeout: 20_000,
+    // MilesWeb delays the TLS handshake on 465 (and the greeting on 587) by ~23 s;
+    // for implicit TLS Nodemailer counts the handshake as part of "connection".
+    connectionTimeout: 45_000,
     greetingTimeout: 45_000,
     socketTimeout: 60_000,
     logger: false,
@@ -83,7 +108,9 @@ export async function sendMessage(auth: AuthorizedMailbox, msg: OutgoingMessage)
   try {
     await transport.sendMail({ envelope, raw });
   } catch (err) {
-    const e = err as { code?: string; responseCode?: number };
+    const e = err as { code?: string; responseCode?: number; command?: string };
+    // Diagnostic only: error code / SMTP stage / response code — never credentials or content.
+    console.error("[smtp] send failed", { code: e.code, command: e.command, responseCode: e.responseCode });
     if (e.code === "EAUTH") throw new SendError("The mail server rejected the mailbox password.", e.code);
     if (e.responseCode && e.responseCode >= 500) {
       throw new SendError("The mail server refused this message (check the recipient addresses).", e.code);

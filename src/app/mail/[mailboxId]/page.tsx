@@ -6,6 +6,7 @@ import { ArrowLeft, ImageOff, Paperclip, PenSquare, Star } from "lucide-react";
 import { z } from "zod";
 import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { requireMailboxAccess, type AuthorizedMailbox } from "@/server/auth/dal";
 import { listFolders, listMessages, mailboxOverview, openMessage } from "@/server/mail/messages";
@@ -37,16 +38,17 @@ async function Mail({ params, searchParams }: Pick<PageProps<"/mail/[mailboxId]"
   // (listMessages is scoped to this mailbox, so a foreign id just returns []).
   const requested = pick("folder");
   const requestedOk = requested && z.uuid().safeParse(requested).success ? requested : undefined;
+  const q = pick("q")?.slice(0, 100) ?? "";
   const [overview, folders, early] = await Promise.all([
     mailboxOverview(auth),
     listFolders(auth),
-    requestedOk ? listMessages(auth, requestedOk) : Promise.resolve(null),
+    requestedOk ? listMessages(auth, requestedOk, { q }) : Promise.resolve(null),
   ]);
   const folder = folders.find((f) => f.id === requestedOk) ?? folders.find((f) => f.specialUse === "INBOX") ?? folders[0];
   const { messages } =
-    early && folder?.id === requestedOk ? early : folder ? await listMessages(auth, folder.id) : { messages: [] };
+    early && folder?.id === requestedOk ? early : folder ? await listMessages(auth, folder.id, { q }) : { messages: [] };
   const selectedId = pick("message");
-  const base = `/mail/${mailboxId}?folder=${folder?.id ?? ""}`;
+  const base = `/mail/${mailboxId}?folder=${folder?.id ?? ""}${q ? `&q=${encodeURIComponent(q)}` : ""}`;
 
   return (
     <>
@@ -102,11 +104,22 @@ async function Mail({ params, searchParams }: Pick<PageProps<"/mail/[mailboxId]"
             The mail server rejected the saved password. Sign out and sign in again to reconnect.
           </p>
         ) : null}
+        <form action={`/mail/${mailboxId}`} className="border-b px-3 py-2" role="search">
+          <input type="hidden" name="folder" value={folder?.id ?? ""} />
+          <Input
+            name="q"
+            type="search"
+            defaultValue={q}
+            placeholder={`Search ${folder ? (folder.specialUse === "INBOX" ? "Inbox" : folder.name) : "mail"}…`}
+            aria-label="Search messages in this folder"
+            className="h-8"
+          />
+        </form>
         <ul className="flex-1 divide-y overflow-y-auto">
           {folders.length === 0 ? (
             <li className="p-6 text-center text-sm text-muted-foreground">Setting up your mailbox…</li>
           ) : messages.length === 0 ? (
-            <li className="p-6 text-center text-sm text-muted-foreground">No messages here.</li>
+            <li className="p-6 text-center text-sm text-muted-foreground">{q ? `No messages match “${q}”.` : "No messages here."}</li>
           ) : (
             messages.map((m) => (
               <li key={m.id}>

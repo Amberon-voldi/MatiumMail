@@ -65,10 +65,26 @@ export async function listFolders(auth: AuthorizedMailbox) {
 
 export type MessageSummary = Awaited<ReturnType<typeof listMessages>>["messages"][number];
 
-export async function listMessages(auth: AuthorizedMailbox, folderId: string, opts: { take?: number; cursor?: string } = {}) {
+export async function listMessages(
+  auth: AuthorizedMailbox,
+  folderId: string,
+  opts: { take?: number; cursor?: string; q?: string } = {},
+) {
   const take = Math.min(Math.max(opts.take ?? 50, 1), 100);
+  // Case-insensitive match (utf8mb4_unicode_ci) on subject, sender and preview.
+  const q = opts.q?.trim().slice(0, 100);
+  const search = q && q.length >= 2
+    ? {
+        OR: [
+          { subject: { contains: q } },
+          { fromName: { contains: q } },
+          { fromAddress: { contains: q } },
+          { preview: { contains: q } },
+        ],
+      }
+    : {};
   const rows = await db().messageMeta.findMany({
-    where: { mailboxId: auth.mailboxId, folderId },
+    where: { mailboxId: auth.mailboxId, folderId, ...search },
     orderBy: [{ internalDate: "desc" }, { id: "desc" }],
     take: take + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),

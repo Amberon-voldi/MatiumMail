@@ -2,24 +2,43 @@ import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { db } from "../db";
-import { sessionFromCookies, type SessionUser } from "./session";
+import { sessionsFromCookies, type SessionUser } from "./session";
 
 /**
  * Data Access Layer — the ONLY way pages, actions and route handlers get the
  * current user or a mailbox. Every Server Action / Route Handler must call
- * `requireUser()` (or `requireMailboxAccess()`) itself; never trust the client.
+ * `requireUser()` / `requireSignedInUser()` (or `requireMailboxAccess()`)
+ * itself; never trust the client.
+ *
+ * A browser can be signed in to several accounts. A mailbox is usable when
+ * ANY of them has a grant for it, so every account's mail is open at once.
  *
  * With Cache Components enabled, anything calling these reads the request
  * cookie and must render inside a <Suspense> boundary.
  */
 
-/** Current session, de-duplicated within one request. */
-export const getCurrentSession = cache(sessionFromCookies);
+/** Signed-in accounts (most recent sign-in first), de-duplicated within one request. */
+export const getCurrentSessions = cache(sessionsFromCookies);
 
+/** The most recently signed-in account. */
 export async function requireUser(): Promise<SessionUser> {
-  const session = await getCurrentSession();
+  const [session] = await getCurrentSessions();
   if (!session) redirect("/login");
   return session.user;
+}
+
+/** Every signed-in account, most recent sign-in first. */
+export async function requireUsers(): Promise<SessionUser[]> {
+  const sessions = await getCurrentSessions();
+  if (sessions.length === 0) redirect("/login");
+  return sessions.map((s) => s.user);
+}
+
+/** One particular signed-in account; anything else goes home without saying whether it exists. */
+export async function requireSignedInUser(userId: string): Promise<SessionUser> {
+  const user = (await requireUsers()).find((u) => u.id === userId);
+  if (!user) redirect("/");
+  return user;
 }
 
 export type MailboxPermission = "read" | "send" | "organise" | "manage";
@@ -75,21 +94,26 @@ export type AuthorizedMailbox = {
 };
 
 /**
- * Redirects home when the user has no grant (without revealing whether the
- * mailbox exists) and throws when the grant is too weak for the action.
+ * Acts as the first signed-in account whose grant allows `permission`.
+ * Redirects home when no account has a grant (without revealing whether the
+ * mailbox exists) and throws when every grant is too weak for the action.
  */
 export async function requireMailboxAccess(
   mailboxId: string,
   permission: MailboxPermission,
 ): Promise<AuthorizedMailbox> {
-  const user = await requireUser();
-  const access = await db().mailboxAccess.findUnique({
-    where: { userId_mailboxId: { userId: user.id, mailboxId } },
-    select: { role: true, mailbox: { select: { status: true } } },
+  const users = await requireUsers();
+  const grants = await db().mailboxAccess.findMany({
+    where: { mailboxId, userId: { in: users.map((u) => u.id) } },
+    select: { userId: true, role: true, mailbox: { select: { status: true } } },
   });
-  if (!access || access.mailbox.status === "DISABLED") redirect("/");
-  if (!roleAllows(access.role, permission)) {
+  if (grants.length === 0 || grants[0].mailbox.status === "DISABLED") redirect("/");
+  const order = (userId: string) => users.findIndex((u) => u.id === userId);
+  const grant = grants
+    .filter((g) => roleAllows(g.role, permission))
+    .sort((a, b) => order(a.userId) - order(b.userId))[0];
+  if (!grant) {
     throw new Error(`Not permitted: ${permission}`);
   }
-  return { mailboxId, userId: user.id, role: access.role };
+  return { mailboxId, userId: grant.userId, role: grant.role };
 }

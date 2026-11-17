@@ -1,8 +1,9 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { z } from "zod";
 import { audit } from "@/server/audit";
-import { createSession, destroyCurrentSession } from "@/server/auth/session";
+import { createSession, destroySessions } from "@/server/auth/session";
 import { signIn, type SignInError } from "@/server/auth/sign-in";
 import { requestContext } from "@/server/request";
 
@@ -22,6 +23,8 @@ const MESSAGES: Record<SignInError, string> = {
   invalid_credentials: "That email and password don't match an account here.",
   rate_limited: "Too many attempts. Please wait a few minutes and try again.",
   mail_server_unavailable: "Couldn't reach your mail server. Please try again shortly.",
+  mailbox_password_required:
+    "This mailbox's password was changed. Sign in once with the new mailbox password; after that your Matium Mail password works again.",
 };
 
 export async function signInAction(_prev: SignInState, formData: FormData): Promise<SignInState> {
@@ -50,10 +53,13 @@ export async function signInAction(_prev: SignInState, formData: FormData): Prom
   redirect("/");
 }
 
-export async function signOutAction(): Promise<void> {
+/** Signs out the account in the form's `userId` field, or every account when it is absent. */
+export async function signOutAction(formData: FormData): Promise<void> {
   const ctx = await requestContext();
-  const session = await destroyCurrentSession();
-  if (session) {
+  const raw = formData.get("userId");
+  const userId = typeof raw === "string" && z.uuid().safeParse(raw).success ? raw : undefined;
+  const { ended, remaining } = await destroySessions(userId);
+  for (const session of ended) {
     await audit({
       organizationId: session.user.organizationId,
       action: "auth.logout",
@@ -62,5 +68,5 @@ export async function signOutAction(): Promise<void> {
       userAgent: ctx.userAgent,
     });
   }
-  redirect("/login");
+  redirect(remaining > 0 ? "/accounts" : "/login");
 }

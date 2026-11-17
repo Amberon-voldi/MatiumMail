@@ -16,6 +16,8 @@ export type AuditAction =
   | "auth.login.failure"
   | "auth.login.rate_limited"
   | "auth.logout"
+  | "auth.app_password.set"
+  | "auth.app_password.failure"
   | "mailbox.credential.updated"
   | "mailbox.auth_failed"
   | "mail.sent"

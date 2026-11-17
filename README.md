@@ -27,6 +27,14 @@ npm run dev                 # http://localhost:3000 (or the next free port)
 Sign in with an allowlisted mailbox address and its mailbox password. The password is verified
 against the mail server over TLS and stored envelope-encrypted (`CREDENTIAL_KEYS`).
 
+- **Matium Mail password** (Accounts → Set short password): an optional shorter sign-in password
+  (6+ characters, scrypt-hashed), for when the host's mailbox password rules are too long to type.
+  The mailbox password keeps working and stays the root of trust: if it's changed in mPanel, the
+  short password stops working until the new mailbox password has been entered once (at sign-in,
+  or on the mailbox's "Update mailbox password" page).
+- **Several accounts at once** (Accounts → Add another account): one browser can be signed in to
+  up to 10 addresses; all their mailboxes are open together, and each can be signed out separately.
+
 > The encryption key in `CREDENTIAL_KEYS` must be identical locally and on Netlify, because both
 > use the same database. Losing it means every user has to sign in again (stored passwords become
 > unreadable); leaking it, together with a database copy, exposes mailbox passwords.

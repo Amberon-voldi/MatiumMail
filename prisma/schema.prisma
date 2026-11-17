@@ -124,6 +124,9 @@ model User {
   displayName     String?    @map("display_name")
   role            UserRole   @default(MEMBER)
   status          UserStatus @default(ACTIVE)
+  /// Optional short sign-in password for this app (scrypt hash, see
+  /// src/server/crypto/password-hash.ts). The mailbox password always works too.
+  appPasswordHash String?    @db.VarChar(255) @map("app_password_hash")
   /// Optional app-level TOTP (encrypted with the same envelope scheme).
   totpSecretEnc   Bytes?     @db.VarBinary(512) @map("totp_secret_enc")
   totpEnabledAt   DateTime?  @map("totp_enabled_at")

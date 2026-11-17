@@ -101,7 +101,14 @@ async function Mail({ params, searchParams }: Pick<PageProps<"/mail/[mailboxId]"
         />
         {overview.status === "NEEDS_REAUTH" ? (
           <p className="border-b bg-destructive/5 px-4 py-2 text-xs text-destructive">
-            The mail server rejected the saved password. Sign out and sign in again to reconnect.
+            The mail server rejected the saved password (was it changed in mPanel?).{" "}
+            {auth.role === "OWNER" ? (
+              <Link href={`/mail/${mailboxId}/reconnect`} className="font-medium underline underline-offset-2">
+                Enter the new password
+              </Link>
+            ) : (
+              "Ask the mailbox owner to reconnect it."
+            )}
           </p>
         ) : null}
         <form action={`/mail/${mailboxId}`} className="border-b px-3 py-2" role="search">

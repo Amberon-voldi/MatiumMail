@@ -3,15 +3,15 @@ import { z } from "zod";
 import { db } from "../db";
 import { audit, defaultOrganizationId } from "../audit";
 import { sha256Hex } from "../crypto/tokens";
-import { sealSecret } from "../crypto/envelope";
-import { credentialKeyRing, mailboxCredentialContext } from "../crypto/keyring";
-import { invalidateMailboxConnection } from "../mail/client";
+import { verifyPassword } from "../crypto/password-hash";
 import { verifyImapLogin } from "../mail/imap";
 import type { RequestContext } from "../request";
+import { saveMailboxPassword, storedPasswordStillWorks } from "./mailbox-password";
 import { consume, loginLimits, resetLimit } from "./rate-limit";
 
 /**
- * Sign-in = "prove you know this mailbox's password".
+ * Sign-in = "prove you know this mailbox's password" (or the shorter Matium
+ * Mail password set in the app, see ./app-password.ts).
  *
  * Order matters:
  *   1. validate input
@@ -20,14 +20,22 @@ import { consume, loginLimits, resetLimit } from "./rate-limit";
  *      mailbox of the same address. Unknown addresses are rejected BEFORE any
  *      IMAP connection, so the app can't be used to hammer MilesWeb and get its
  *      IP locked out.
+ *   3b. Matium Mail password, checked against its hash: on a match, sign in
+ *      if the stored mailbox password still works (it stays in use for mail).
  *   4. IMAP LOGIN over verified TLS
- *   5. on success: store the password (envelope-encrypted, new version),
- *      mark the mailbox ACTIVE, reset the per-address limiter, audit.
+ *   5. on success: store the password (envelope-encrypted, new version — see
+ *      ./mailbox-password.ts), mark the mailbox ACTIVE, reset the per-address
+ *      limiter, audit.
  *
  * The caller (Server Action) creates the session cookie.
  */
 
-export type SignInError = "invalid_input" | "invalid_credentials" | "rate_limited" | "mail_server_unavailable";
+export type SignInError =
+  | "invalid_input"
+  | "invalid_credentials"
+  | "rate_limited"
+  | "mail_server_unavailable"
+  | "mailbox_password_required";
 export type SignInResult =
   | { ok: true; userId: string }
   | { ok: false; error: SignInError; retryAfterSeconds?: number };
@@ -125,7 +133,10 @@ export async function signIn(raw: { email: unknown; password: unknown }, ctx: Re
   // ── 3. allowlist ──────────────────────────────────────────────────────────
   const p = db();
   const [user, mailbox] = await Promise.all([
-    p.user.findUnique({ where: { email }, select: { id: true, status: true, organizationId: true } }),
+    p.user.findUnique({
+      where: { email },
+      select: { id: true, status: true, organizationId: true, appPasswordHash: true },
+    }),
     p.mailbox.findUnique({
       where: { address: email },
       select: {
@@ -174,6 +185,41 @@ export async function signIn(raw: { email: unknown; password: unknown }, ctx: Re
     return { ok: false, error: "invalid_credentials" };
   }
 
+  // ── 3b. Matium Mail password ──────────────────────────────────────────────
+  // No match → the input is tried as the mailbox password below. On a match
+  // the stored mailbox password must still work: after a change in mPanel
+  // the new one has to be entered once before the short one works again.
+  if (
+    user.appPasswordHash &&
+    mailbox.credential &&
+    (await verifyPassword(password, user.appPasswordHash))
+  ) {
+    if (!(await storedPasswordStillWorks(mailbox.id))) {
+      await audit({
+        organizationId: user.organizationId,
+        action: "auth.login.failure",
+        actorUserId: user.id,
+        mailboxId: mailbox.id,
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        metadata: { method: "app_password", reason: "mailbox_password_changed" },
+      });
+      return { ok: false, error: "mailbox_password_required" };
+    }
+    await p.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+    await resetLimit(loginLimits.perAccount(emailHash).key);
+    await audit({
+      organizationId: user.organizationId,
+      action: "auth.login.success",
+      actorUserId: user.id,
+      mailboxId: mailbox.id,
+      ip: ctx.ip,
+      userAgent: ctx.userAgent,
+      metadata: { method: "app_password" },
+    });
+    return { ok: true, userId: user.id };
+  }
+
   // ── 4. IMAP login ─────────────────────────────────────────────────────────
   const profile = mailbox.domain.serverProfile;
   const result = await verifyImapLogin(
@@ -202,37 +248,9 @@ export async function signIn(raw: { email: unknown; password: unknown }, ctx: Re
   }
 
   // ── 5. persist ────────────────────────────────────────────────────────────
-  const version = (mailbox.credential?.version ?? 0) + 1;
-  const sealed = sealSecret(credentialKeyRing(), mailboxCredentialContext(mailbox.id, version), password);
-  const now = new Date();
-  // Prisma's Bytes fields require Uint8Array<ArrayBuffer>; copy out of Node Buffers.
-  const bytes = (b: Buffer) => new Uint8Array(b);
-  const credentialData = {
-    type: "PASSWORD" as const,
-    username: email,
-    ciphertext: bytes(sealed.ciphertext),
-    iv: bytes(sealed.iv),
-    authTag: bytes(sealed.authTag),
-    wrappedDek: bytes(sealed.wrappedDek),
-    keyId: sealed.keyId,
-    version,
-    lastVerifiedAt: now,
-  };
-  await p.$transaction([
-    p.mailboxCredential.upsert({
-      where: { mailboxId: mailbox.id },
-      create: { mailboxId: mailbox.id, ...credentialData },
-      update: credentialData,
-    }),
-    p.mailbox.update({
-      where: { id: mailbox.id },
-      data: { status: "ACTIVE", statusReason: null, consecutiveFailures: 0 },
-    }),
-    p.user.update({ where: { id: user.id }, data: { lastLoginAt: now } }),
-  ]);
+  const version = await saveMailboxPassword(mailbox.id, email, password);
+  await p.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
   await resetLimit(loginLimits.perAccount(emailHash).key);
-  // New credential version: drop any cached connection built from the old one.
-  invalidateMailboxConnection(mailbox.id);
 
   await audit({
     organizationId: user.organizationId,
@@ -241,7 +259,7 @@ export async function signIn(raw: { email: unknown; password: unknown }, ctx: Re
     mailboxId: mailbox.id,
     ip: ctx.ip,
     userAgent: ctx.userAgent,
-    metadata: { credentialVersion: version },
+    metadata: { method: "mailbox_password", credentialVersion: version },
   });
 
   return { ok: true, userId: user.id };

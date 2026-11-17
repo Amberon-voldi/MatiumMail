@@ -15,13 +15,25 @@ const POLL_MS = 2 * 60_000;
  * cache is older than a minute), every 2 minutes while the tab is visible, and
  * when the tab regains focus. Refreshes the view only when something changed.
  */
-export function AutoSync({ mailboxId, lastSyncAt, initial }: { mailboxId: string; lastSyncAt: string | null; initial: boolean }) {
+export function AutoSync({
+  mailboxId,
+  folderId,
+  lastSyncAt,
+  initial,
+}: {
+  mailboxId: string;
+  /** The folder being viewed; it is what gets synced (any sync also refreshes all unread counts). */
+  folderId?: string;
+  lastSyncAt: string | null;
+  initial: boolean;
+}) {
   const router = useRouter();
   const running = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const run = async (scope: "inbox" | "all") => {
+    const target = folderId ?? "inbox";
+    const run = async (scope: string) => {
       if (running.current || document.visibilityState !== "visible") return;
       running.current = true;
       try {
@@ -35,17 +47,17 @@ export function AutoSync({ mailboxId, lastSyncAt, initial }: { mailboxId: string
         running.current = false;
       }
     };
-    const stale = !lastSyncAt || Date.now() - new Date(lastSyncAt).getTime() > 60_000;
+    const stale = !lastSyncAt || Date.now() - new Date(lastSyncAt).getTime() > 30_000;
     if (initial) void run("all");
-    else if (stale) void run("inbox");
-    const timer = setInterval(() => void run("inbox"), POLL_MS);
-    const onVisible = () => document.visibilityState === "visible" && void run("inbox");
+    else if (stale) void run(target);
+    const timer = setInterval(() => void run(target), POLL_MS);
+    const onVisible = () => document.visibilityState === "visible" && void run(target);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [mailboxId, lastSyncAt, initial, router]);
+  }, [mailboxId, folderId, lastSyncAt, initial, router]);
 
   return error ? (
     <p role="status" className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-700 dark:text-amber-300">

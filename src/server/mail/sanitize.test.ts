@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emailDocument, escapeHtml, hasBlockedRemoteImages, sanitizeEmailHtml } from "./sanitize";
+import { emailDocument, escapeHtml, hasBlockedRemoteImages, previewFromHtml, sanitizeEmailHtml } from "./sanitize";
 
 const clean = (html: string) => sanitizeEmailHtml(html);
 
@@ -73,6 +73,16 @@ describe("emailDocument", () => {
     expect(doc).toContain('src="https://t.example/p.gif"');
     expect(doc).toContain("img-src data: cid: https: http:");
     expect(doc).not.toContain("script-src");
+  });
+});
+
+describe("previewFromHtml", () => {
+  it("drops CSS/script/head content and tags", () => {
+    const html = `<html><head><title>T</title><style>body,table,td{font-family:Arial}</style></head><body><p>Hello&nbsp;<b>there</b></p><script>x()</script><div>Second line &amp; more</div></body></html>`;
+    expect(previewFromHtml(html)).toBe("Hello there Second line & more");
+  });
+  it("truncates", () => {
+    expect(previewFromHtml(`<p>${"a".repeat(500)}</p>`, 10)).toBe("aaaaaaaaaa");
   });
 });
 

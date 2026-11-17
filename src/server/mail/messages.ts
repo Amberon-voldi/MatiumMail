@@ -6,7 +6,7 @@ import type { AuthorizedMailbox } from "../auth/dal";
 import { roleAllows, type MailboxPermission } from "../auth/dal";
 import { db } from "../db";
 import { withImap } from "./client";
-import { emailDocument, escapeHtml, hasBlockedRemoteImages, sanitizeEmailHtml } from "./sanitize";
+import { emailDocument, escapeHtml, hasBlockedRemoteImages, previewFromHtml, sanitizeEmailHtml } from "./sanitize";
 
 /**
  * Reading and organising messages. Every function takes an AuthorizedMailbox
@@ -56,7 +56,7 @@ export async function replyContext(auth: AuthorizedMailbox, messageId: string) {
 export async function listFolders(auth: AuthorizedMailbox) {
   const folders = await db().mailFolder.findMany({
     where: { mailboxId: auth.mailboxId, selectable: true },
-    select: { id: true, name: true, path: true, specialUse: true, totalCount: true, unreadCount: true },
+    select: { id: true, name: true, path: true, specialUse: true, totalCount: true, unreadCount: true, lastSyncedAt: true },
   });
   return folders.sort(
     (a, b) => ROLE_ORDER.indexOf(a.specialUse) - ROLE_ORDER.indexOf(b.specialUse) || a.path.localeCompare(b.path),
@@ -136,6 +136,9 @@ export async function openMessage(
   const cacheKey = `${meta.id}:${meta.uidValidity}:${opts.allowRemoteImages ? 1 : 0}`;
   const cached = bodyCache.get(cacheKey);
   if (cached && cached.expires > Date.now()) {
+    if (cached.preview && meta.preview !== cached.preview) {
+      await p.messageMeta.update({ where: { id: meta.id }, data: { preview: cached.preview } }).catch(() => {});
+    }
     return { ...cached.message, isSeen: meta.isSeen, isFlagged: meta.isFlagged };
   }
 
@@ -164,8 +167,12 @@ export async function openMessage(
   const rawHtml = parsed.html || parsed.textAsHtml || `<pre>${escapeHtml(parsed.text ?? "")}</pre>`;
   const clean = sanitizeEmailHtml(rawHtml);
 
-  if (meta.preview === null && parsed.text) {
-    const preview = parsed.text.replace(/\s+/g, " ").trim().slice(0, 280);
+  // Preview from the visible text: for HTML mail, derive it from the HTML
+  // (mailparser's text version can include <style> contents).
+  const preview = parsed.html
+    ? previewFromHtml(parsed.html)
+    : (parsed.text ?? "").replace(/\s+/g, " ").trim().slice(0, 280);
+  if (preview && meta.preview !== preview) {
     await p.messageMeta.update({ where: { id: meta.id }, data: { preview } }).catch(() => {});
   }
 
@@ -185,19 +192,20 @@ export async function openMessage(
     isSeen: meta.isSeen,
     isFlagged: meta.isFlagged,
   };
-  cacheBody(cacheKey, opened);
+  cacheBody(cacheKey, opened, preview);
   return opened;
 }
 
 // Small in-memory LRU of opened messages (per server instance).
 const BODY_TTL_MS = 10 * 60_000;
 const BODY_MAX = 100;
-const gb = globalThis as unknown as { __matiumBodies?: Map<string, { message: OpenedMessage; expires: number }> };
-const bodyCache = (gb.__matiumBodies ??= new Map());
+type BodyEntry = { message: OpenedMessage; preview: string; expires: number };
+const gb = globalThis as unknown as { __matiumBodiesV2?: Map<string, BodyEntry> };
+const bodyCache = (gb.__matiumBodiesV2 ??= new Map());
 
-function cacheBody(key: string, message: OpenedMessage): void {
+function cacheBody(key: string, message: OpenedMessage, preview: string): void {
   bodyCache.delete(key);
-  bodyCache.set(key, { message, expires: Date.now() + BODY_TTL_MS });
+  bodyCache.set(key, { message, preview, expires: Date.now() + BODY_TTL_MS });
   while (bodyCache.size > BODY_MAX) bodyCache.delete(bodyCache.keys().next().value!);
 }
 

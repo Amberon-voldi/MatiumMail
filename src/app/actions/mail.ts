@@ -27,11 +27,13 @@ function failure(err: unknown): { ok: false; error: string } {
   return { ok: false, error: "Something went wrong. Please try again." };
 }
 
-export async function syncNowAction(mailboxId: string, scope: "inbox" | "all" = "inbox"): Promise<ActionResult<SyncResult>> {
+/** scope: "inbox", "all", or a folder id (sync just the folder being viewed). */
+export async function syncNowAction(mailboxId: string, scope: string = "inbox"): Promise<ActionResult<SyncResult>> {
   const id = uuid.parse(mailboxId);
   await requireMailboxAccess(id, "read");
+  const resolved = scope === "all" ? "all" : uuid.safeParse(scope).success ? { folderId: scope } : "inbox";
   try {
-    return { ok: true, data: await syncMailbox(id, { scope: scope === "all" ? "all" : "inbox" }) };
+    return { ok: true, data: await syncMailbox(id, { scope: resolved }) };
   } catch (err) {
     return failure(err);
   }

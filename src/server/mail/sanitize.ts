@@ -82,6 +82,28 @@ export function escapeHtml(text: string): string {
   return text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
+/**
+ * Plain-text preview from HTML: drops <style>/<script>/<head> contents (which
+ * html-to-text conversions often leak as "body,table{...}"), tags and common
+ * entities, then collapses whitespace.
+ */
+export function previewFromHtml(html: string, max = 280): string {
+  const text = html
+    .replace(/<(style|script|head|title)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<br\s*\/?>|<\/(p|div|tr|li|h\d)>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(\d+);/g, (_m, n: string) => String.fromCodePoint(Number(n)))
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.slice(0, max);
+}
+
 /** True when the sanitised HTML references remote images the user hasn't loaded. */
 export function hasBlockedRemoteImages(sanitized: string): boolean {
   return /data-remote-src=/i.test(sanitized);

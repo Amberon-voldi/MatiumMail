@@ -90,7 +90,13 @@ async function Mail({ params, searchParams }: Pick<PageProps<"/mail/[mailboxId]"
           <h1 className="truncate text-sm font-semibold">{folder ? (folder.specialUse === "INBOX" ? "Inbox" : folder.name) : "Mail"}</h1>
           <SyncButton mailboxId={mailboxId} />
         </header>
-        <AutoSync mailboxId={mailboxId} lastSyncAt={overview.lastSyncAt?.toISOString() ?? null} initial={folders.length === 0} />
+        <AutoSync
+          key={folder?.id ?? "none"}
+          mailboxId={mailboxId}
+          folderId={folder?.id}
+          lastSyncAt={folder?.lastSyncedAt?.toISOString() ?? null}
+          initial={folders.length === 0}
+        />
         {overview.status === "NEEDS_REAUTH" ? (
           <p className="border-b bg-destructive/5 px-4 py-2 text-xs text-destructive">
             The mail server rejected the saved password. Sign out and sign in again to reconnect.

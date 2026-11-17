@@ -1,0 +1,516 @@
+// =============================================================================
+// MatiumMail — Prisma schema (MariaDB 11.4 via @prisma/adapter-mariadb)
+// =============================================================================
+// Conventions
+//   * UUIDv7 primary keys (time-ordered → good B-tree locality).
+//   * Target: MariaDB 11.4 (InnoDB, utf8mb4) via Prisma's mysql provider.
+//     snake_case names via @@map / @map.
+//   * Every mail-scoped table carries `mailboxId` (denormalised where needed) so
+//     that the data-access layer can enforce `WHERE mailbox_id = $authorised`.
+//   * IMAP UIDs / UIDVALIDITY / MODSEQ are unsigned 32/64-bit → stored as BigInt.
+//   * Search uses InnoDB FULLTEXT indexes (@@fulltext). MySQL has no array
+//     type, so list-valued fields (flags, references) are JSON.
+//   * MySQL JSON columns cannot take literal defaults; the data-access layer
+//     always writes them explicitly.
+//   * Secrets live ONLY in `MailboxCredential`, a separate table that ordinary
+//     queries never join; only server code holding the key ring
+//     (src/server/crypto) can decrypt.
+// =============================================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+// -----------------------------------------------------------------------------
+// Enums
+// -----------------------------------------------------------------------------
+
+enum UserRole {
+  OWNER // full control of the organisation
+  ADMIN // manage domains, mailboxes, users, permissions
+  MEMBER // uses mailboxes they have been granted
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum TransportSecurity {
+  TLS // implicit TLS (IMAPS 993 / SMTPS 465)
+  STARTTLS // upgrade on plain port (143 / 587); plaintext fallback is NEVER allowed
+}
+
+enum DomainStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum MailboxStatus {
+  PENDING_VERIFICATION // created, credentials not yet proven
+  ACTIVE
+  NEEDS_REAUTH // IMAP/SMTP auth failed (e.g. password changed in mPanel)
+  ERROR // repeated non-auth failures (server down, TLS problem…)
+  DISABLED // turned off by an admin
+}
+
+enum CredentialType {
+  PASSWORD
+  APP_PASSWORD
+  OAUTH2 // future: Gmail / Microsoft 365 providers
+}
+
+enum MailboxAccessRole {
+  OWNER // the person whose mailbox it is; read, send, manage, delete
+  DELEGATE // shared-mailbox member; read, send-as, organise
+  READ_ONLY // read & search only (e.g. auditor)
+}
+
+enum FolderSpecialUse {
+  NONE
+  INBOX
+  SENT
+  DRAFTS
+  JUNK
+  TRASH
+  ARCHIVE
+  ALL
+  FLAGGED
+}
+
+enum QuotaSource {
+  IMAP_QUOTA // RFC 2087 / 9208 GETQUOTAROOT
+  COMPUTED // sum of message sizes across folders (usage only)
+  MANUAL // limit entered by an admin (usage may still be computed)
+}
+
+enum ContactSource {
+  MANUAL
+  AUTO // harvested from recipients the user has sent to
+  IMPORTED
+}
+
+// -----------------------------------------------------------------------------
+// Tenancy & identity
+// -----------------------------------------------------------------------------
+
+model Organization {
+  id        String   @id @default(uuid(7)) @db.Char(36)
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users          User[]
+  serverProfiles MailServerProfile[]
+  domains        Domain[]
+  mailboxes      Mailbox[]
+  auditLogs      AuditLog[]
+
+  @@map("organizations")
+}
+
+/// A human who signs in to the web app. Their sign-in identity is an email
+/// address on a registered domain; authentication is delegated to IMAP.
+model User {
+  id              String     @id @default(uuid(7)) @db.Char(36)
+  organizationId  String     @map("organization_id") @db.Char(36)
+  email           String     @unique @db.VarChar(320) // lower-cased, primary sign-in address
+  displayName     String?    @map("display_name")
+  role            UserRole   @default(MEMBER)
+  status          UserStatus @default(ACTIVE)
+  /// Optional app-level TOTP (encrypted with the same envelope scheme).
+  totpSecretEnc   Bytes?     @db.VarBinary(512) @map("totp_secret_enc")
+  totpEnabledAt   DateTime?  @map("totp_enabled_at")
+  preferences     Json       // theme, density, shortcuts, reading-pane position…
+  lastLoginAt     DateTime?  @map("last_login_at")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  organization  Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  sessions      Session[]
+  mailboxAccess MailboxAccess[]   @relation("AccessUser")
+  grantsMade    MailboxAccess[]   @relation("AccessGrantedBy")
+  signatures    Signature[]
+  composeDrafts ComposeDraft[]
+
+  @@index([organizationId])
+  @@map("users")
+}
+
+/// Opaque server-side session. The cookie holds a random 256-bit token; only
+/// its SHA-256 hash is stored here, so a DB leak cannot be replayed.
+model Session {
+  id            String    @id @db.Char(64) // hex(sha256(token))
+  userId        String    @map("user_id") @db.Char(36)
+  activeMailboxId String? @map("active_mailbox_id") @db.Char(36)
+  mfaVerifiedAt DateTime? @map("mfa_verified_at")
+  ipAddress     String?   @map("ip_address")
+  userAgent     String?   @db.VarChar(512) @map("user_agent")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  lastSeenAt    DateTime  @default(now()) @map("last_seen_at")
+  expiresAt     DateTime  @map("expires_at") // sliding idle timeout
+  absoluteExpiresAt DateTime @map("absolute_expires_at") // hard cap
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// -----------------------------------------------------------------------------
+// Mail infrastructure configuration (no code change to add a domain/mailbox)
+// -----------------------------------------------------------------------------
+
+/// Connection settings for a mail server. Several domains on the same MilesWeb
+/// server share one profile. Values come from MilesWeb — never hard-coded.
+model MailServerProfile {
+  id             String            @id @default(uuid(7)) @db.Char(36)
+  organizationId String            @map("organization_id") @db.Char(36)
+  name           String // e.g. "MilesWeb – server A"
+  provider       String            @default("generic-imap") // future: "gmail", "m365"
+  imapHost       String            @map("imap_host")
+  imapPort       Int               @map("imap_port")
+  imapSecurity   TransportSecurity @map("imap_security")
+  smtpHost       String            @map("smtp_host")
+  smtpPort       Int               @map("smtp_port")
+  smtpSecurity   TransportSecurity @map("smtp_security")
+  /// Expected TLS server name if it differs from host (never disables verification).
+  tlsServername  String?           @map("tls_servername")
+  /// Max concurrent IMAP connections we allow ourselves per mailbox.
+  maxConnectionsPerMailbox Int     @default(3) @map("max_connections_per_mailbox")
+  /// Our own outbound throttle to stay under the provider's sending limits.
+  smtpMaxPerHour Int?              @map("smtp_max_per_hour")
+  /// Capability snapshot from the last probe (IDLE, QUOTA, CONDSTORE…).
+  capabilities   Json?
+  verifiedAt     DateTime?         @map("verified_at")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  domains      Domain[]
+
+  @@map("mail_server_profiles")
+}
+
+model Domain {
+  id              String       @id @default(uuid(7)) @db.Char(36)
+  organizationId  String       @map("organization_id") @db.Char(36)
+  serverProfileId String       @map("server_profile_id") @db.Char(36)
+  name            String       @unique @db.VarChar(253) // lower-case FQDN, e.g. "noida.fit"
+  status          DomainStatus @default(ACTIVE)
+  /// If true, a successful IMAP login with an address on this domain creates
+  /// the User + Mailbox automatically (owner access). Otherwise admin-only.
+  autoProvision   Boolean      @default(false) @map("auto_provision")
+  defaultQuotaBytes BigInt?    @map("default_quota_bytes") // used when IMAP QUOTA is unavailable
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+
+  organization  Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  serverProfile MailServerProfile @relation(fields: [serverProfileId], references: [id], onDelete: Restrict)
+  mailboxes     Mailbox[]
+
+  @@index([organizationId])
+  @@map("domains")
+}
+
+model Mailbox {
+  id             String        @id @default(uuid(7)) @db.Char(36)
+  organizationId String        @map("organization_id") @db.Char(36)
+  domainId       String        @map("domain_id") @db.Char(36)
+  address        String        @unique @db.VarChar(320) // lower-case full address
+  displayName    String?       @map("display_name") // default "From" name
+  status         MailboxStatus @default(PENDING_VERIFICATION)
+  statusReason   String?       @db.Text @map("status_reason")
+  /// Per-mailbox settings: remote-image policy, default signature ids,
+  /// sent-copy behaviour, folder role overrides, etc.
+  settings       Json         
+
+  // --- storage / quota ----------------------------------------------------
+  quotaUsedBytes  BigInt?      @map("quota_used_bytes")
+  quotaLimitBytes BigInt?      @map("quota_limit_bytes")
+  quotaSource     QuotaSource? @map("quota_source")
+  quotaCheckedAt  DateTime?    @map("quota_checked_at")
+
+  // --- sync bookkeeping ---------------------------------------------------
+  lastSyncAt      DateTime?    @map("last_sync_at")
+  lastSyncError   String?      @db.Text @map("last_sync_error")
+  consecutiveFailures Int      @default(0) @map("consecutive_failures")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organization     Organization       @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  domain           Domain             @relation(fields: [domainId], references: [id], onDelete: Restrict)
+  credential       MailboxCredential?
+  access           MailboxAccess[]
+  folders          MailFolder[]
+  messages         MessageMeta[]
+  contacts         Contact[]
+  signatures       Signature[]
+  composeDrafts    ComposeDraft[]
+  storageSnapshots StorageSnapshot[]
+
+  @@index([organizationId])
+  @@index([domainId])
+  @@map("mailboxes")
+}
+
+/// Encrypted mailbox secret (envelope encryption, see architecture doc §5).
+/// Kept in its own table so no ordinary query ever selects ciphertext.
+model MailboxCredential {
+  mailboxId     String         @id @map("mailbox_id") @db.Char(36)
+  type          CredentialType @default(PASSWORD)
+  username      String         @db.VarChar(320) // usually the full address; stored separately in case provider differs
+  ciphertext    Bytes          @db.VarBinary(2048) // AES-256-GCM(secret)
+  iv            Bytes          @db.Binary(12) // 12-byte nonce
+  authTag       Bytes          @db.Binary(16) @map("auth_tag") // 16-byte GCM tag
+  wrappedDek    Bytes          @db.VarBinary(1024) @map("wrapped_dek") // data key encrypted by KMS/master key
+  keyId         String         @map("key_id") // which KEK wrapped the DEK (rotation)
+  version       Int            @default(1) // bumped on every rotation; part of AAD
+  lastVerifiedAt DateTime?     @map("last_verified_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+
+  mailbox Mailbox @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@map("mailbox_credentials")
+}
+
+/// Explicit user ↔ mailbox authorisation. No row → no access, regardless of role.
+model MailboxAccess {
+  userId      String            @map("user_id") @db.Char(36)
+  mailboxId   String            @map("mailbox_id") @db.Char(36)
+  role        MailboxAccessRole
+  grantedById String?           @map("granted_by_id") @db.Char(36)
+  createdAt   DateTime          @default(now()) @map("created_at")
+
+  user      User    @relation("AccessUser", fields: [userId], references: [id], onDelete: Cascade)
+  mailbox   Mailbox @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  grantedBy User?   @relation("AccessGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@id([userId, mailboxId])
+  @@index([mailboxId])
+  @@map("mailbox_access")
+}
+
+// -----------------------------------------------------------------------------
+// Live-mail metadata cache (IMAP is the source of truth)
+// -----------------------------------------------------------------------------
+
+model MailFolder {
+  id            String           @id @default(uuid(7)) @db.Char(36)
+  mailboxId     String           @map("mailbox_id") @db.Char(36)
+  path          String           @db.VarChar(512) // full IMAP path, e.g. "INBOX.Sent"
+  delimiter     String?
+  name          String           @db.VarChar(255) // display name (last path segment, decoded from modified UTF-7)
+  specialUse    FolderSpecialUse @default(NONE) @map("special_use")
+  subscribed    Boolean          @default(true)
+  selectable    Boolean          @default(true)
+
+  // IMAP sync state
+  uidValidity   BigInt?          @map("uid_validity")
+  uidNext       BigInt?          @map("uid_next")
+  highestModSeq BigInt?          @map("highest_mod_seq")
+  totalCount    Int              @default(0) @map("total_count")
+  unreadCount   Int              @default(0) @map("unread_count")
+  /// Lowest UID we have metadata for (backfill cursor; null = fully backfilled)
+  backfillCursorUid BigInt?      @map("backfill_cursor_uid")
+  lastSyncedAt  DateTime?        @map("last_synced_at")
+
+  mailbox  Mailbox       @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  messages MessageMeta[]
+
+  @@unique([mailboxId, path])
+  @@index([mailboxId, specialUse])
+  @@map("mail_folders")
+}
+
+/// Envelope-level metadata for one message in one folder. Bodies and
+/// attachments are NOT stored here — they are fetched from IMAP on demand.
+model MessageMeta {
+  id            String    @id @default(uuid(7)) @db.Char(36)
+  mailboxId     String    @map("mailbox_id") @db.Char(36)
+  folderId      String    @map("folder_id") @db.Char(36)
+  uidValidity   BigInt    @map("uid_validity")
+  uid           BigInt
+  modSeq        BigInt?   @map("mod_seq")
+
+  messageIdHeader String? @db.VarChar(512) @map("message_id_header")
+  inReplyTo     String?   @db.VarChar(512) @map("in_reply_to")
+  references    Json    
+  threadKey     String?   @db.VarChar(64) @map("thread_key") // computed conversation id
+
+  subject       String?   @db.Text
+  fromName      String?   @db.VarChar(255) @map("from_name")
+  fromAddress   String?   @db.VarChar(320) @map("from_address")
+  toAddrs       Json      @map("to_addrs") // [{name,address}]
+  ccAddrs       Json      @map("cc_addrs")
+  bccAddrs      Json      @map("bcc_addrs") // only present on Sent/Drafts
+  replyTo       Json      @map("reply_to")
+  sentAt        DateTime? @db.DateTime(3) @map("sent_at") // Date: header
+  internalDate  DateTime  @db.DateTime(3) @map("internal_date") // server receive time
+  sizeBytes     Int       @map("size_bytes")
+
+  flags         Json     // raw IMAP flags incl. keywords
+  isSeen        Boolean   @default(false) @map("is_seen")
+  isFlagged     Boolean   @default(false) @map("is_flagged") // "starred"
+  isAnswered    Boolean   @default(false) @map("is_answered")
+  isDraft       Boolean   @default(false) @map("is_draft")
+  hasAttachments Boolean  @default(false) @map("has_attachments")
+  preview       String?   @db.VarChar(300) // plain-text snippet
+
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  mailbox Mailbox    @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  folder  MailFolder @relation(fields: [folderId], references: [id], onDelete: Cascade)
+
+  @@unique([folderId, uidValidity, uid])
+  @@index([folderId, internalDate(sort: Desc)])
+  @@index([mailboxId, internalDate(sort: Desc)])
+  @@index([mailboxId, messageIdHeader])
+  @@index([mailboxId, threadKey])
+  @@index([folderId, isSeen])
+  @@index([mailboxId, fromAddress])
+  @@fulltext([subject, fromName, fromAddress, preview])
+  @@map("message_meta")
+}
+
+/// Server-side autosave buffer for the composer (crash safety). On explicit
+/// "Save draft" the MIME is APPENDed to the IMAP Drafts folder.
+model ComposeDraft {
+  id          String   @id @default(uuid(7)) @db.Char(36)
+  mailboxId   String   @map("mailbox_id") @db.Char(36)
+  userId      String   @map("user_id") @db.Char(36)
+  /// IMAP Drafts UID of the last saved copy (replaced on each save).
+  imapDraftUid BigInt? @map("imap_draft_uid")
+  mode        String   @default("new") // new | reply | replyAll | forward
+  sourceMessageId String? @map("source_message_id") @db.Char(36)
+  payload     Json // {to,cc,bcc,subject,html,attachmentRefs[]}
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  mailbox Mailbox @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([mailboxId, userId])
+  @@map("compose_drafts")
+}
+
+// -----------------------------------------------------------------------------
+// Contacts & signatures (per mailbox → mailbox isolation preserved)
+// -----------------------------------------------------------------------------
+
+model Contact {
+  id         String        @id @default(uuid(7)) @db.Char(36)
+  mailboxId  String        @map("mailbox_id") @db.Char(36)
+  email      String        @db.VarChar(320) // lower-cased
+  name       String?       @db.VarChar(255)
+  company    String?
+  notes      String?       @db.Text
+  source     ContactSource @default(MANUAL)
+  useCount   Int           @default(0) @map("use_count") // ranking for autocomplete
+  lastUsedAt DateTime?     @map("last_used_at")
+  createdAt  DateTime      @default(now()) @map("created_at")
+  updatedAt  DateTime      @updatedAt @map("updated_at")
+
+  mailbox Mailbox @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@unique([mailboxId, email])
+  @@index([mailboxId, useCount(sort: Desc)])
+  @@index([mailboxId, name])
+  @@fulltext([email, name, company])
+  @@map("contacts")
+  // autocomplete: prefix LIKE 'abc%' on the (mailbox_id, email) / (mailbox_id, name) indexes
+}
+
+model Signature {
+  id             String   @id @default(uuid(7)) @db.Char(36)
+  mailboxId      String   @map("mailbox_id") @db.Char(36)
+  /// null = shared signature for everyone using this mailbox
+  userId         String?  @map("user_id") @db.Char(36)
+  name           String
+  html           String   @db.MediumText // sanitised on save
+  isDefaultNew   Boolean  @default(false) @map("is_default_new")
+  isDefaultReply Boolean  @default(false) @map("is_default_reply")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  mailbox Mailbox @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([mailboxId, userId])
+  @@map("signatures")
+}
+
+// -----------------------------------------------------------------------------
+// Archive vault — DEFERRED (not in v1). The design is kept in
+// PHASE-1-ARCHITECTURE.md §6; its tables will be added by a later migration.
+// -----------------------------------------------------------------------------
+
+// -----------------------------------------------------------------------------
+// Rate limiting (fixed window; replaces Redis in v1)
+// -----------------------------------------------------------------------------
+
+/// One counter per key and window. Email-based keys use a SHA-256 of the
+/// normalised address so failed attempts for other people's addresses are not
+/// stored in clear text.
+model RateLimitBucket {
+  key          String    @id @db.VarChar(191) // e.g. "login:ip:203.0.113.7", "login:email:<sha256>"
+  count        Int       @default(0)
+  windowStart  DateTime  @db.DateTime(3) @map("window_start")
+  blockedUntil DateTime? @db.DateTime(3) @map("blocked_until")
+  updatedAt    DateTime  @updatedAt @db.DateTime(3) @map("updated_at")
+
+  @@index([updatedAt])
+  @@map("rate_limit_buckets")
+}
+
+// -----------------------------------------------------------------------------
+// Observability & compliance
+// -----------------------------------------------------------------------------
+
+model StorageSnapshot {
+  id         String      @id @default(uuid(7)) @db.Char(36)
+  mailboxId  String      @map("mailbox_id") @db.Char(36)
+  usedBytes  BigInt      @map("used_bytes")
+  limitBytes BigInt?     @map("limit_bytes")
+  source     QuotaSource
+  takenAt    DateTime    @default(now()) @map("taken_at")
+
+  mailbox Mailbox @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@index([mailboxId, takenAt(sort: Desc)])
+  @@map("storage_snapshots")
+}
+
+/// Append-only. Enforced by a separate DB user with INSERT/SELECT only on this
+/// table where the MySQL host allows per-table grants; otherwise by BEFORE
+/// UPDATE/DELETE triggers that SIGNAL an error (raw migration).
+model AuditLog {
+  id             String   @id @default(uuid(7)) @db.Char(36)
+  organizationId String   @map("organization_id") @db.Char(36)
+  actorUserId    String?  @map("actor_user_id") @db.Char(36) // null = system/worker
+  mailboxId      String?  @map("mailbox_id") @db.Char(36)
+  action         String   @db.VarChar(100) // e.g. "auth.login.success", "message.delete_permanent"
+  targetType     String?  @map("target_type")
+  targetId       String?  @map("target_id")
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @db.VarChar(512) @map("user_agent")
+  metadata       Json     // NEVER contains secrets or message bodies
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt(sort: Desc)])
+  @@index([mailboxId, createdAt(sort: Desc)])
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}

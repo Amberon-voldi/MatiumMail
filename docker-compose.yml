@@ -1,0 +1,44 @@
+# Local development infrastructure ONLY. Nothing here is used in production.
+#   npm run dev:infra        start
+#   npm run dev:infra:down   stop (data kept in named volumes)
+#
+# mariadb    — same version as MilesWeb production (11.4.13)
+# greenmail  — throwaway IMAP/SMTP server; test account dev@dev.local / devpass
+#              Implicit-TLS ports use a self-signed certificate, which the app
+#              accepts ONLY for localhost hosts outside production.
+services:
+  mariadb:
+    image: mariadb:11.4
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: devroot
+      MARIADB_DATABASE: matiummail
+      MARIADB_USER: matiummail
+      MARIADB_PASSWORD: matiummail
+    ports:
+      - "127.0.0.1:3307:3306"
+    volumes:
+      - mariadb-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  greenmail:
+    image: greenmail/standalone:2.1.5
+    restart: unless-stopped
+    environment:
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.all
+        -Dgreenmail.hostname=0.0.0.0
+        -Dgreenmail.users=dev:devpass@dev.local
+        -Dgreenmail.users.login=email
+    ports:
+      - "127.0.0.1:3025:3025" # SMTP (plain, dev only)
+      - "127.0.0.1:3465:3465" # SMTPS
+      - "127.0.0.1:3143:3143" # IMAP (plain, dev only)
+      - "127.0.0.1:3993:3993" # IMAPS
+
+volumes:
+  mariadb-data:

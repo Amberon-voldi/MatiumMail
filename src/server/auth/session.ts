@@ -1,5 +1,6 @@
 import "server-only";
 import { cookies } from "next/headers";
+import { connection } from "next/server";
 import { db } from "../db";
 import { env } from "../env";
 import { randomToken, sha256Hex } from "../crypto/tokens";
@@ -100,6 +101,10 @@ export async function validateSessionToken(token: string): Promise<ValidSession 
 
 /** Read and validate the session from the request cookie. */
 export async function sessionFromCookies(): Promise<ValidSession | null> {
+  // Session checks compare expiry times with the current clock, which must
+  // never happen during prerendering (Cache Components). connection() stops
+  // prerendering here so everything below runs only at request time.
+  await connection();
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   return token ? validateSessionToken(token) : null;
 }

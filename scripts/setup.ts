@@ -49,6 +49,8 @@ const configSchema = z.object({
         serverProfile: z.string(),
         defaultQuotaGb: z.number().positive().nullable().optional(),
         status: z.enum(["ACTIVE", "DISABLED"]).default("ACTIVE"),
+        /** Any mailbox on this domain can sign in; its account is created on first login. */
+        autoProvision: z.boolean().default(false),
       }),
     )
     .min(1),
@@ -127,13 +129,13 @@ async function main() {
         organizationId: org.id,
         serverProfileId: profileIds.get(d.serverProfile)!,
         status: d.status,
-        autoProvision: false,
+        autoProvision: d.autoProvision,
         defaultQuotaBytes,
       },
-      update: { serverProfileId: profileIds.get(d.serverProfile)!, status: d.status, defaultQuotaBytes },
+      update: { serverProfileId: profileIds.get(d.serverProfile)!, status: d.status, defaultQuotaBytes, autoProvision: d.autoProvision },
     });
     domainRows.set(d.name, { id: row.id, defaultQuotaBytes });
-    console.log(`domain        ${d.name}  (${d.status})`);
+    console.log(`domain        ${d.name}  (${d.status}${d.autoProvision ? ", auto-provision" : ""})`);
   }
 
   for (const u of cfg.users) {

@@ -37,6 +37,52 @@ const inputSchema = z.object({
   password: z.string().min(1).max(1024),
 });
 
+/**
+ * Mailboxes on a REGISTERED domain with autoProvision=true get an account on
+ * their first successful login (user + mailbox + OWNER access). Rows are
+ * created only after the mail server accepts the password. Unregistered
+ * domains are never accepted: MilesWeb is shared hosting, so other customers'
+ * domains live on the same mail server and would also authenticate there.
+ */
+async function autoProvision(email: string, password: string): Promise<void> {
+  const p = db();
+  if (await p.mailbox.findUnique({ where: { address: email }, select: { id: true } })) return;
+  const domain = await p.domain.findUnique({
+    where: { name: email.split("@")[1] ?? "" },
+    select: {
+      id: true,
+      organizationId: true,
+      status: true,
+      autoProvision: true,
+      defaultQuotaBytes: true,
+      serverProfile: { select: { imapHost: true, imapPort: true, imapSecurity: true, tlsServername: true } },
+    },
+  });
+  if (!domain || domain.status !== "ACTIVE" || !domain.autoProvision) return;
+  const sp = domain.serverProfile;
+  const check = await verifyImapLogin(
+    { host: sp.imapHost, port: sp.imapPort, security: sp.imapSecurity, tlsServername: sp.tlsServername },
+    { username: email, password },
+  );
+  if (!check.ok) return;
+  const user = await p.user.upsert({
+    where: { email },
+    create: { email, organizationId: domain.organizationId, role: "MEMBER", preferences: {} },
+    update: {},
+  });
+  const mailbox = await p.mailbox.create({
+    data: {
+      address: email,
+      organizationId: domain.organizationId,
+      domainId: domain.id,
+      settings: {},
+      quotaLimitBytes: domain.defaultQuotaBytes,
+      quotaSource: domain.defaultQuotaBytes ? "MANUAL" : null,
+    },
+  });
+  await p.mailboxAccess.create({ data: { userId: user.id, mailboxId: mailbox.id, role: "OWNER" } });
+}
+
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
@@ -70,6 +116,11 @@ export async function signIn(raw: { email: unknown; password: unknown }, ctx: Re
     }
     return { ok: false, error: "rate_limited", retryAfterSeconds: Math.ceil(retryAfterMs / 1000) };
   }
+
+  // ── 2b. first login on a registered domain → create the account ───────────
+  await autoProvision(email, password).catch((err) =>
+    console.error("[auth] auto-provision failed", err instanceof Error ? err.message : err),
+  );
 
   // ── 3. allowlist ──────────────────────────────────────────────────────────
   const p = db();

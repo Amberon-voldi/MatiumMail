@@ -1,22 +1,52 @@
 {
-  "organization": { "name": "Matium", "slug": "matium" },
+  "organization": {
+    "name": "Matium",
+    "slug": "matium"
+  },
   "serverProfiles": [
     {
       "key": "milesweb",
       "name": "MilesWeb (45.199.139.26)",
-      "imap": { "host": "mail.spinternationalpvtltd.com", "port": 993, "security": "TLS" },
-      "smtp": { "host": "mail.spinternationalpvtltd.com", "port": 465, "security": "TLS" },
+      "imap": {
+        "host": "mail.spinternationalpvtltd.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "mail.spinternationalpvtltd.com",
+        "port": 465,
+        "security": "TLS"
+      },
       "tlsServername": null,
       "maxConnectionsPerMailbox": 3,
       "smtpMaxPerHour": null
     }
   ],
   "domains": [
-    { "name": "spinternationalpvtltd.com", "serverProfile": "milesweb", "defaultQuotaGb": 5 },
-    { "name": "noida.fit", "serverProfile": "milesweb", "defaultQuotaGb": 5 },
-    { "name": "matiumtech.com", "serverProfile": "milesweb", "defaultQuotaGb": 5 }
+    {
+      "name": "spinternationalpvtltd.com",
+      "serverProfile": "milesweb",
+      "defaultQuotaGb": 5,
+      "autoProvision": true
+    },
+    {
+      "name": "noida.fit",
+      "serverProfile": "milesweb",
+      "defaultQuotaGb": 5,
+      "autoProvision": true
+    },
+    {
+      "name": "matiumtech.com",
+      "serverProfile": "milesweb",
+      "defaultQuotaGb": 5,
+      "autoProvision": true
+    }
   ],
   "users": [
-    { "email": "info@spinternationalpvtltd.com", "displayName": "SP International", "role": "OWNER" }
+    {
+      "email": "info@spinternationalpvtltd.com",
+      "displayName": "SP International",
+      "role": "OWNER"
+    }
   ]
 }

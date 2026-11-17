@@ -44,11 +44,13 @@ mPanel's own "Email client settings" page lists exactly these settings (IMAP 993
 * Leftovers that can be cleaned up later: Zoho verification + `zmail._domainkey`, Cloudflare Email Routing DKIM `cf2024-1`, Squarespace `_domainconnect`.
 * Mailbox: `info@spinternationalpvtltd.com` (5 GB, DKIM configured).
 
-### `noida.fit`: hosting ready, mail not switched yet
-* MX is still **Cloudflare Email Routing** (`route1/2/3.mx.cloudflare.net`; locked while Email Routing is enabled).
+### `noida.fit`: switched to MilesWeb (2026-11-18)
+* Cloudflare Email Routing **disabled and its records removed** (the `route1/2/3.mx.cloudflare.net` MX, `cf2024-1` DKIM and Cloudflare-only SPF). Nothing is forwarded any more.
+* MX `0 mail.noida.fit` → 45.199.139.26 (DNS only) ✅
+* SPF `v=spf1 ip4:45.199.139.26 include:relay.mailbaby.net ~all` ✅ (same senders as spinternationalpvtltd.com, without the Cloudflare include)
 * `mail.noida.fit` A → 45.199.139.26 ✅; `imap/pop/smtp.noida.fit` CNAME → `mail.noida.fit` ✅
-* DKIM `hostingcp._domainkey` (MilesWeb) already published ✅ · DMARC `p=none`
-* ⚠️ **Apex SPF only allows Cloudflare**: `v=spf1 include:_spf.mx.cloudflare.net ~all`. Mail sent from `@noida.fit` through MilesWeb would fail SPF.
+* DKIM `hostingcp._domainkey` (MilesWeb) ✅ · DMARC `p=none`
+* Mail to an address with no mPanel mailbox bounces, so every address that used to be forwarded needs a mailbox (or an mPanel forwarder).
 * Other mail services on this domain (keep them): **Resend / Amazon SES** (`resend._domainkey`, `send.`/`rsend.` CNAMEs, SES DKIM CNAMEs, and on `mail.noida.fit` an SES bounce MX + `include:amazonses.com` SPF). An A record and an MX record on `mail.noida.fit` coexist fine.
 * Website: CloudFront (proxied).
 
@@ -104,8 +106,4 @@ Plan:
    ```
 2. ~~Remote DB access test~~: done. Database + user created, `%` allowlisted, TLS login verified.
 3. **Register `matiumtech.com`**, or pick another hostname for the webmail.
-4. **Before switching noida.fit MX** (all in Cloudflare DNS):
-   * update apex SPF to `v=spf1 ip4:45.199.139.26 include:relay.mailbaby.net include:_spf.mx.cloudflare.net ~all`
-   * create the noida.fit mailboxes in mPanel
-   * disable Cloudflare Email Routing for noida.fit, then set MX `0 mail.noida.fit`
-5. List the 5 noida.fit mailbox addresses.
+4. ~~Switch noida.fit MX~~: done 2026-11-18 (Email Routing off, MX and SPF updated). **Create the noida.fit mailboxes in mPanel** (`ambi@` first; also `siddharth@`, `hello@`, `support@`, `bobby@` as needed). Each one can then sign in to the webmail; `autoProvision` adds it on first login.

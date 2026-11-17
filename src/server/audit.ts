@@ -22,7 +22,9 @@ export type AuditAction =
   | "mailbox.auth_failed"
   | "mail.sent"
   | "mail.moved"
-  | "mail.trashed";
+  | "mail.trashed"
+  | "mail.archived"
+  | "mail.deleted";
 
 export type AuditEntry = {
   organizationId: string;

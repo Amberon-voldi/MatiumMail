@@ -11,11 +11,13 @@ const securityHeaders = [
   { key: "Referrer-Policy", value: "no-referrer" },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
-  {
-    key: "Content-Security-Policy",
-    value: "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'",
-  },
 ];
+
+/** Pages only: API responses (attachments, proxied images) set their own, stricter or PDF-compatible CSP. */
+const pageCsp = {
+  key: "Content-Security-Policy",
+  value: "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'",
+};
 
 const nextConfig: NextConfig = {
   cacheComponents: true,
@@ -30,7 +32,10 @@ const nextConfig: NextConfig = {
     },
   },
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      { source: "/:path((?!api/).*)", headers: [pageCsp] },
+    ];
   },
 };
 

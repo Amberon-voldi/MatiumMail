@@ -148,8 +148,17 @@ async function recordHealthy(mailboxId: string): Promise<void> {
 
 const IMAP_IDLE_MS = 2 * 60_000;
 const CONN_TTL_MS = 5 * 60_000;
+/** A connection unused for this long is checked with NOOP before reuse. */
+const PROBE_AFTER_MS = 45_000;
+const PROBE_TIMEOUT_MS = 5_000;
 
-type PoolEntry = { client: ImapFlow; conn: MailboxConnection; busy: number; idleTimer?: ReturnType<typeof setTimeout> };
+type PoolEntry = {
+  client: ImapFlow;
+  conn: MailboxConnection;
+  busy: number;
+  lastUsed: number;
+  idleTimer?: ReturnType<typeof setTimeout>;
+};
 type Caches = {
   pool: Map<string, PoolEntry>;
   connecting: Map<string, Promise<PoolEntry>>;
@@ -192,7 +201,7 @@ async function openPooled(mailboxId: string): Promise<PoolEntry> {
     throw new MailServerError(reason);
   }
   await recordHealthy(mailboxId);
-  const entry: PoolEntry = { client, conn, busy: 0 };
+  const entry: PoolEntry = { client, conn, busy: 0, lastUsed: Date.now() };
   client.on("close", () => {
     if (caches.pool.get(mailboxId) === entry) caches.pool.delete(mailboxId);
   });
@@ -236,6 +245,23 @@ function isConnectionError(err: unknown): boolean {
  * If a reused connection turns out to be dead (server timeout, frozen
  * serverless instance), it is replaced and `fn` retried once.
  */
+/** NOOP with a short deadline: false when the connection no longer answers. */
+async function stillAlive(client: ImapFlow): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      client.noop().then(() => client.usable),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), PROBE_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function withImap<T>(
   mailboxId: string,
   fn: (client: ImapFlow, conn: MailboxConnection) => Promise<T>,
@@ -244,6 +270,17 @@ export async function withImap<T>(
     const { entry, reused } = await checkout(mailboxId);
     clearTimeout(entry.idleTimer);
     entry.busy++;
+    // After a quiet spell (or a frozen serverless instance) the server may have
+    // dropped the socket without us noticing; check cheaply instead of letting
+    // the user's request hang until the socket timeout.
+    if (reused && entry.busy === 1 && Date.now() - entry.lastUsed > PROBE_AFTER_MS && !(await stillAlive(entry.client))) {
+      if (caches.pool.get(mailboxId) === entry) caches.pool.delete(mailboxId);
+      entry.client.close();
+      release(mailboxId, entry);
+      if (attempt < 2) continue;
+      throw new MailServerError("unreachable");
+    }
+    entry.lastUsed = Date.now();
     try {
       return await fn(entry.client, entry.conn);
     } catch (err) {
@@ -255,6 +292,7 @@ export async function withImap<T>(
       if (dead && reused && attempt === 0) continue;
       throw err;
     } finally {
+      entry.lastUsed = Date.now();
       release(mailboxId, entry);
     }
   }

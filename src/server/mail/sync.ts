@@ -190,6 +190,42 @@ async function syncFolderMessages(client: ImapFlow, mailboxId: string, folder: S
   }
 }
 
+/**
+ * Load the next batch of OLDER messages of a folder (below the lowest cached
+ * UID) — the first sync only caches the newest INITIAL_WINDOW. Called when the
+ * user scrolls to the end of a list.
+ */
+export async function backfillFolder(
+  mailboxId: string,
+  folderId: string,
+  batch = 150,
+): Promise<{ added: number; remaining: number }> {
+  const p = db();
+  const folder = await p.mailFolder.findFirst({
+    where: { id: folderId, mailboxId, selectable: true },
+    select: { path: true, uidValidity: true },
+  });
+  if (!folder || folder.uidValidity == null) return { added: 0, remaining: 0 };
+  const uidValidity = folder.uidValidity;
+  return withImap(mailboxId, async (client) => {
+    const lock = await client.getMailboxLock(folder.path, { readOnly: true });
+    try {
+      if (!client.mailbox || BigInt(client.mailbox.uidValidity) !== uidValidity) return { added: 0, remaining: 0 };
+      const agg = await p.messageMeta.aggregate({ where: { folderId, uidValidity }, _min: { uid: true } });
+      const minUid = agg._min.uid != null ? Number(agg._min.uid) : null;
+      if (minUid === null || minUid <= 1) return { added: 0, remaining: 0 };
+      const older = await client.search({ uid: `1:${minUid - 1}` }, { uid: true });
+      if (!Array.isArray(older) || older.length === 0) return { added: 0, remaining: 0 };
+      older.sort((a, b) => a - b);
+      const pick = older.slice(-Math.max(1, Math.min(batch, 500)));
+      const added = await fetchAndInsert(client, pick.join(","), true, 0, { mailboxId, folderId, uidValidity });
+      return { added, remaining: older.length - pick.length };
+    } finally {
+      lock.release();
+    }
+  });
+}
+
 type RowContext = { mailboxId: string; folderId: string; uidValidity: bigint };
 
 async function fetchAndInsert(

@@ -59,20 +59,60 @@ describe("sanitizeEmailHtml — keeps legitimate email markup", () => {
   });
 });
 
+describe("sanitizeEmailHtml — images", () => {
+  it("drops 1×1 tracking pixels instead of parking them", () => {
+    const out = clean(`<img src="https://t.example/open.gif" width="1" height="1"><img src="https://t.example/o2.gif" style="width:1px;height:1px">`);
+    expect(out).not.toContain("t.example");
+    expect(hasBlockedRemoteImages(out)).toBe(false);
+  });
+
+  it("won't let an email pre-fill data-remote-src", () => {
+    const out = clean(`<img data-remote-src="javascript:alert(1)" src="cid:x">`);
+    expect(out).not.toContain("javascript:");
+    expect(out).toContain('src="cid:x"');
+  });
+
+  it("notices remote backgrounds and CSS images too", () => {
+    expect(hasBlockedRemoteImages(clean(`<td background="https://cdn.example/bg.png">x</td>`))).toBe(true);
+    expect(hasBlockedRemoteImages(clean(`<div style="background-image:url('https://cdn.example/bg.png')">x</div>`))).toBe(true);
+  });
+});
+
 describe("emailDocument", () => {
-  it("blocks scripts and remote loads by default", () => {
+  const proxy = (url: string) => `/api/img?u=${encodeURIComponent(url)}&s=sig`;
+
+  it("blocks scripts and every remote load by default", () => {
     const doc = emailDocument(clean(`<img src="https://t.example/p.gif"><p>x</p>`));
     expect(doc).toContain("default-src 'none'");
-    expect(doc).toContain("img-src data: cid:;");
+    expect(doc).toContain("img-src data:;");
     // A real src attribute (preceded by whitespace), not the parked data-remote-src.
     expect(doc).not.toMatch(/\ssrc="https:\/\/t\.example/);
   });
 
-  it("restores remote images only when allowed", () => {
-    const doc = emailDocument(clean(`<img src="https://t.example/p.gif">`), { allowRemoteImages: true });
-    expect(doc).toContain('src="https://t.example/p.gif"');
-    expect(doc).toContain("img-src data: cid: https: http:");
+  it("loads remote images through the same-origin proxy only", () => {
+    const doc = emailDocument(clean(`<img src="https://t.example/p.gif?a=1&b=2">`), { proxyImages: proxy });
+    expect(doc).toContain(`src="/api/img?u=${encodeURIComponent("https://t.example/p.gif?a=1&b=2")}&amp;s=sig"`);
+    expect(doc).toContain("img-src 'self' data:");
+    expect(doc).not.toContain("https:;");
     expect(doc).not.toContain("script-src");
+  });
+
+  it("proxies background attributes and CSS url() in attributes and <style>", () => {
+    const html = clean(
+      `<style>.hero{background:url("https://cdn.example/hero.jpg")}</style>` +
+        `<table background="https://cdn.example/bg.png"><tr><td style="background-image:url(https://cdn.example/td.png)">x</td></tr></table>`,
+    );
+    const doc = emailDocument(html, { proxyImages: proxy });
+    expect(doc).not.toMatch(/url\(\s*["']?https:/);
+    expect(doc).not.toContain('background="https:');
+    expect(doc).toContain(`url('/api/img?u=${encodeURIComponent("https://cdn.example/hero.jpg")}&s=sig')`);
+    expect(doc).toContain(`background="/api/img?u=${encodeURIComponent("https://cdn.example/bg.png")}&amp;s=sig"`);
+  });
+
+  it("leaves images blocked when the proxy refuses a URL", () => {
+    const doc = emailDocument(clean(`<img src="https://t.example/p.gif">`), { proxyImages: () => null });
+    expect(doc).toContain('data-remote-src="https://t.example/p.gif"');
+    expect(doc).not.toMatch(/\ssrc="/);
   });
 });
 

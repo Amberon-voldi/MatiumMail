@@ -17,6 +17,14 @@ import { loadMailboxConnection, withImap } from "./client";
  * greeting timeout. TLS is always verified (implicit TLS or required STARTTLS).
  */
 
+export type OutgoingAttachment = {
+  filename: string;
+  contentType: string;
+  content: Buffer;
+  /** Content-ID for images shown inside the HTML body (cid:…). */
+  cid?: string;
+};
+
 export type OutgoingMessage = {
   to: string[];
   cc?: string[];
@@ -26,6 +34,9 @@ export type OutgoingMessage = {
   html?: string;
   inReplyTo?: string | null;
   references?: string[];
+  attachments?: OutgoingAttachment[];
+  /** Extra headers (e.g. the composer's draft key). */
+  headers?: Record<string, string>;
 };
 
 export type SendResult = { messageId: string; savedToSent: boolean };
@@ -37,12 +48,17 @@ export class SendError extends Error {
   }
 }
 
-export async function sendMessage(auth: AuthorizedMailbox, msg: OutgoingMessage): Promise<SendResult> {
-  if (!roleAllows(auth.role, "send")) throw new Error("Not permitted: send");
-  const conn = await loadMailboxConnection(auth.mailboxId);
-
+/**
+ * RFC 5322 bytes for a message from this mailbox. Drafts keep their Bcc header
+ * (so it survives re-opening); sent mail never carries it.
+ */
+export async function buildMime(
+  from: { address: string; displayName: string | null },
+  msg: OutgoingMessage,
+  opts: { keepBcc?: boolean } = {},
+) {
   const node = new MailComposer({
-    from: { name: conn.displayName ?? "", address: conn.address },
+    from: { name: from.displayName ?? "", address: from.address },
     to: msg.to,
     cc: msg.cc?.length ? msg.cc : undefined,
     bcc: msg.bcc?.length ? msg.bcc : undefined,
@@ -51,14 +67,26 @@ export async function sendMessage(auth: AuthorizedMailbox, msg: OutgoingMessage)
     html: msg.html,
     inReplyTo: msg.inReplyTo ?? undefined,
     references: msg.references?.length ? msg.references : undefined,
+    attachments: msg.attachments?.map((a) => ({
+      filename: a.filename,
+      contentType: a.contentType,
+      content: a.content,
+      ...(a.cid ? { cid: a.cid, contentDisposition: "inline" as const } : {}),
+    })),
+    headers: msg.headers,
     date: new Date(),
     disableFileAccess: true,
     disableUrlAccess: true,
   }).compile();
-  node.keepBcc = false; // Bcc recipients get the mail but never appear in its headers.
+  node.keepBcc = Boolean(opts.keepBcc); // Bcc recipients get the mail but never appear in its headers.
   const raw = await node.build();
-  const envelope = node.getEnvelope();
-  const messageId = node.messageId();
+  return { raw, envelope: node.getEnvelope(), messageId: node.messageId() };
+}
+
+export async function sendMessage(auth: AuthorizedMailbox, msg: OutgoingMessage): Promise<SendResult> {
+  if (!roleAllows(auth.role, "send")) throw new Error("Not permitted: send");
+  const conn = await loadMailboxConnection(auth.mailboxId);
+  const { raw, envelope, messageId } = await buildMime(conn, msg);
 
   const allowSelfSigned = env().allowSelfSignedLocalMail && isLocalHost(conn.smtp.host);
   const servername = conn.smtp.tlsServername || conn.smtp.host;
@@ -112,6 +140,9 @@ export async function sendMessage(auth: AuthorizedMailbox, msg: OutgoingMessage)
     // Diagnostic only: error code / SMTP stage / response code — never credentials or content.
     console.error("[smtp] send failed", { code: e.code, command: e.command, responseCode: e.responseCode });
     if (e.code === "EAUTH") throw new SendError("The mail server rejected the mailbox password.", e.code);
+    if (e.responseCode === 552) {
+      throw new SendError("The message is too large for the mail server. Try smaller or fewer attachments.", e.code);
+    }
     if (e.responseCode && e.responseCode >= 500) {
       throw new SendError("The mail server refused this message (check the recipient addresses).", e.code);
     }

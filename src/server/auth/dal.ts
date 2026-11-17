@@ -93,6 +93,35 @@ export type AuthorizedMailbox = {
   readonly role: AccessRole;
 };
 
+export type MailboxAccessCheck =
+  | { ok: true; auth: AuthorizedMailbox }
+  | { ok: false; status: 401 | 403 | 404 };
+
+/**
+ * Non-redirecting access check for Route Handlers (JSON APIs): the first
+ * signed-in account whose grant allows `permission`, or why there is none.
+ * 404 deliberately covers "no grant" too, so ids can't be probed.
+ */
+export async function checkMailboxAccess(
+  mailboxId: string,
+  permission: MailboxPermission,
+): Promise<MailboxAccessCheck> {
+  const sessions = await getCurrentSessions();
+  if (sessions.length === 0) return { ok: false, status: 401 };
+  const users = sessions.map((s) => s.user);
+  const grants = await db().mailboxAccess.findMany({
+    where: { mailboxId, userId: { in: users.map((u) => u.id) } },
+    select: { userId: true, role: true, mailbox: { select: { status: true } } },
+  });
+  if (grants.length === 0 || grants[0].mailbox.status === "DISABLED") return { ok: false, status: 404 };
+  const order = (userId: string) => users.findIndex((u) => u.id === userId);
+  const grant = grants
+    .filter((g) => roleAllows(g.role, permission))
+    .sort((a, b) => order(a.userId) - order(b.userId))[0];
+  if (!grant) return { ok: false, status: 403 };
+  return { ok: true, auth: { mailboxId, userId: grant.userId, role: grant.role } };
+}
+
 /**
  * Acts as the first signed-in account whose grant allows `permission`.
  * Redirects home when no account has a grant (without revealing whether the
@@ -102,18 +131,9 @@ export async function requireMailboxAccess(
   mailboxId: string,
   permission: MailboxPermission,
 ): Promise<AuthorizedMailbox> {
-  const users = await requireUsers();
-  const grants = await db().mailboxAccess.findMany({
-    where: { mailboxId, userId: { in: users.map((u) => u.id) } },
-    select: { userId: true, role: true, mailbox: { select: { status: true } } },
-  });
-  if (grants.length === 0 || grants[0].mailbox.status === "DISABLED") redirect("/");
-  const order = (userId: string) => users.findIndex((u) => u.id === userId);
-  const grant = grants
-    .filter((g) => roleAllows(g.role, permission))
-    .sort((a, b) => order(a.userId) - order(b.userId))[0];
-  if (!grant) {
-    throw new Error(`Not permitted: ${permission}`);
-  }
-  return { mailboxId, userId: grant.userId, role: grant.role };
+  const check = await checkMailboxAccess(mailboxId, permission);
+  if (check.ok) return check.auth;
+  if (check.status === 401) redirect("/login");
+  if (check.status === 404) redirect("/");
+  throw new Error(`Not permitted: ${permission}`);
 }

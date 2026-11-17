@@ -14,6 +14,11 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Everything except the login page, Next internals and static files.
-  matcher: ["/((?!login|_next/static|_next/image|favicon\\.ico|robots\\.txt|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)"],
+  // Everything except the login page, Next internals, static files and the
+  // manifest. API routes authenticate themselves and answer 401 as JSON (the
+  // image proxy is requested from the sandboxed email frame and is authorised
+  // by its signature, not the cookie).
+  matcher: [
+    "/((?!login|api/|_next/static|_next/image|favicon\\.ico|robots\\.txt|manifest\\.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+  ],
 };

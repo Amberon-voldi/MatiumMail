@@ -56,22 +56,41 @@ const OPTIONS: sanitizeHtml.IOptions = {
       tagName,
       attribs: { ...attribs, target: "_blank", rel: "noopener noreferrer nofollow" },
     }),
-    img: (tagName, attribs) => {
+    img: (tagName, original) => {
+      // Only the sanitiser may park URLs; an email can't pre-fill this attribute.
+      const attribs = { ...original };
+      delete attribs["data-remote-src"];
       const src = attribs.src ?? "";
+      // Tracking pixels (1×1 images) are dropped instead of being loaded.
+      if (isTrackingPixel(attribs)) return { tagName, attribs: { alt: "", style: "display:none" } };
       // data: is only allowed for raster images (no SVG — it can carry script).
       if (/^data:/i.test(src) && !/^data:image\/(png|jpe?g|gif|webp|bmp);/i.test(src)) {
         return { tagName, attribs: { alt: attribs.alt ?? "" } };
       }
-      // Remote images are parked in data-remote-src; the CSP blocks them anyway.
+      // Remote images are parked in data-remote-src; emailDocument() points
+      // them at the image proxy (or leaves them blocked by the CSP).
       if (/^https?:/i.test(src)) {
-        const rest = { ...attribs };
-        delete rest.src;
-        return { tagName, attribs: { ...rest, "data-remote-src": src } };
+        delete attribs.src;
+        return { tagName, attribs: { ...attribs, "data-remote-src": src } };
       }
       return { tagName, attribs };
     },
   },
 };
+
+function pixels(value: string | undefined): number | null {
+  if (value == null) return null;
+  const m = /^\s*(\d+(?:\.\d+)?)\s*(px)?\s*$/i.exec(value);
+  return m ? Number(m[1]) : null;
+}
+
+/** A 1×1 (or smaller) image: an open-tracking beacon, never content. */
+function isTrackingPixel(attribs: Record<string, string>): boolean {
+  const style = attribs.style ?? "";
+  const w = pixels(attribs.width) ?? pixels(/(?:^|;)\s*width\s*:\s*([^;]+)/i.exec(style)?.[1]);
+  const h = pixels(attribs.height) ?? pixels(/(?:^|;)\s*height\s*:\s*([^;]+)/i.exec(style)?.[1]);
+  return w !== null && h !== null && w <= 2 && h <= 2;
+}
 
 export function sanitizeEmailHtml(html: string): string {
   return sanitizeHtml(html, OPTIONS);
@@ -104,30 +123,87 @@ export function previewFromHtml(html: string, max = 280): string {
   return text.slice(0, max);
 }
 
-/** True when the sanitised HTML references remote images the user hasn't loaded. */
+const REMOTE_REF = /data-remote-src=|background="https?:|url\(\s*(?:&quot;|&#39;|["'])?\s*https?:/i;
+
+/** True when the sanitised HTML references remote images (img, background or CSS url()). */
 export function hasBlockedRemoteImages(sanitized: string): boolean {
-  return /data-remote-src=/i.test(sanitized);
+  return REMOTE_REF.test(sanitized);
 }
+
+function decodeAttr(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
+}
+
+/** Maps a remote image URL to the same-origin proxy path, or null to keep it blocked. */
+export type ImageRewriter = (url: string) => string | null;
+
+const CSS_URL = /url\(\s*(&quot;|&#39;|["'])?\s*(https?:\/\/[^"'()\s]+?)\s*(?:&quot;|&#39;|["'])?\s*\)/gi;
+
+/**
+ * Point every remote image reference at the proxy: parked <img> sources,
+ * `background` attributes and CSS url() in style attributes and <style> blocks.
+ * Proxy paths never contain quotes, parentheses or spaces (see imageProxyUrl).
+ */
+export function proxyRemoteImages(sanitized: string, rewrite: ImageRewriter): string {
+  const attr = (url: string) => {
+    const proxied = rewrite(decodeAttr(url));
+    return proxied ? proxied.replace(/&/g, "&amp;") : null;
+  };
+  // <style> contents are raw text (no entity decoding); everything else is markup.
+  return sanitized
+    .split(/(<style\b[^>]*>[\s\S]*?<\/style>)/i)
+    .map((segment, i) => {
+      if (i % 2 === 1) {
+        return segment.replace(CSS_URL, (m, _q, url: string) => {
+          const proxied = rewrite(url);
+          return proxied ? `url('${proxied}')` : m;
+        });
+      }
+      return segment
+        .replace(/data-remote-src="([^"]*)"/gi, (m, url: string) => {
+          const proxied = attr(url);
+          return proxied ? `src="${proxied}"` : m;
+        })
+        .replace(/\bbackground="(https?:[^"]*)"/gi, (m, url: string) => {
+          const proxied = attr(url);
+          return proxied ? `background="${proxied}"` : m;
+        })
+        .replace(CSS_URL, (m, _q, url: string) => {
+          const proxied = attr(url);
+          return proxied ? `url('${proxied}')` : m;
+        });
+    })
+    .join("");
+}
+
+const BASE_CSS =
+  "html,body{margin:0;padding:0}" +
+  'body{padding:12px 14px;font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#18181b;background:#fff;overflow-wrap:anywhere;-webkit-text-size-adjust:100%;text-size-adjust:100%}' +
+  "img{max-width:100%;height:auto}table{max-width:100%}" +
+  "pre{white-space:pre-wrap;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}" +
+  "blockquote{margin:0 0 0 .8ex;border-left:2px solid #d4d4d8;padding-left:1ex;color:#52525b}" +
+  "a{color:#4318c9}";
 
 /**
  * A complete, self-contained document for <iframe sandbox srcdoc>.
- * With allowRemoteImages, parked images are restored and https images are
- * permitted by the CSP; everything else stays blocked.
+ * With `proxyImages`, remote images load through the same-origin image proxy
+ * (the CSP allows 'self' and data: only); without it they stay blocked.
+ * Nothing in the document can run script or reach any other server.
  */
-export function emailDocument(sanitized: string, opts: { allowRemoteImages?: boolean } = {}): string {
-  let body = sanitized;
-  let imgSrc = "data: cid:";
-  if (opts.allowRemoteImages) {
-    body = body.replace(/data-remote-src="([^"]*)"/gi, (_m, url: string) => `src="${url}"`);
-    imgSrc += " https: http:";
-  }
+export function emailDocument(sanitized: string, opts: { proxyImages?: ImageRewriter } = {}): string {
+  const body = opts.proxyImages ? proxyRemoteImages(sanitized, opts.proxyImages) : sanitized;
   const csp = [
     "default-src 'none'",
-    `img-src ${imgSrc}`,
+    opts.proxyImages ? "img-src 'self' data:" : "img-src data:",
     "style-src 'unsafe-inline'",
     "font-src data:",
     "form-action 'none'",
     "base-uri 'none'",
   ].join("; ");
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="referrer" content="no-referrer"><base target="_blank"><style>html,body{margin:0;padding:0}body{padding:16px;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111;background:#fff;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}pre{white-space:pre-wrap}</style></head><body>${body}</body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${csp}"><meta name="referrer" content="no-referrer"><meta name="color-scheme" content="light"><base target="_blank"><style>${BASE_CSS}</style></head><body>${body}</body></html>`;
 }

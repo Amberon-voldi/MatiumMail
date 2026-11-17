@@ -409,6 +409,36 @@ model ComposeDraft {
   @@map("compose_drafts")
 }
 
+/// A file attached in the composer, uploaded in small chunks (serverless
+/// request bodies are capped at a few MB) and kept only until the message is
+/// sent or the upload is a day old.
+model ComposeUpload {
+  id          String   @id @default(uuid(7)) @db.Char(36)
+  mailboxId   String   @map("mailbox_id") @db.Char(36)
+  userId      String   @map("user_id") @db.Char(36)
+  filename    String   @db.VarChar(255)
+  contentType String   @map("content_type") @db.VarChar(255)
+  size        Int // total bytes the client announced
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  chunks ComposeUploadChunk[]
+
+  @@index([mailboxId, userId])
+  @@index([createdAt])
+  @@map("compose_uploads")
+}
+
+model ComposeUploadChunk {
+  uploadId String @map("upload_id") @db.Char(36)
+  seq      Int
+  data     Bytes  @db.MediumBlob
+
+  upload ComposeUpload @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+
+  @@id([uploadId, seq])
+  @@map("compose_upload_chunks")
+}
+
 // -----------------------------------------------------------------------------
 // Contacts & signatures (per mailbox → mailbox isolation preserved)
 // -----------------------------------------------------------------------------

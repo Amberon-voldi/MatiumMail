@@ -11,13 +11,22 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 export const metadata: Metadata = {
   title: { default: "Matium Mail", template: "%s · Matium Mail" },
   description: "Business email for Matium and partner domains.",
+  applicationName: "Matium Mail",
   robots: { index: false, follow: false },
+  appleWebApp: { capable: true, title: "Matium Mail", statusBarStyle: "default" },
+  formatDetection: { telephone: false, email: false, address: false },
 };
 
 export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // Content can extend under notches/home indicators; padding uses env(safe-area-inset-*).
+  viewportFit: "cover",
+  // The on-screen keyboard shrinks the layout instead of covering the composer.
+  interactiveWidget: "resizes-content",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#ffffff" },
-    { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
+    { media: "(prefers-color-scheme: dark)", color: "#0b0b0c" },
   ],
 };
 
@@ -27,7 +36,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col bg-background text-foreground">
         <ThemeProvider>
           {children}
-          <Toaster position="bottom-right" />
+          <Toaster position="bottom-center" />
         </ThemeProvider>
       </body>
     </html>

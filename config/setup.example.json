@@ -8,12 +8,12 @@
       "key": "milesweb",
       "name": "MilesWeb (45.199.139.26)",
       "imap": {
-        "host": "mail.spinternationalpvtltd.com",
+        "host": "mail.matiumtech.com",
         "port": 993,
         "security": "TLS"
       },
       "smtp": {
-        "host": "mail.spinternationalpvtltd.com",
+        "host": "mail.matiumtech.com",
         "port": 465,
         "security": "TLS"
       },

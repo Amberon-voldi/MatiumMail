@@ -242,6 +242,8 @@ model Mailbox {
   lastSyncAt      DateTime?    @map("last_sync_at")
   lastSyncError   String?      @db.Text @map("last_sync_error")
   consecutiveFailures Int      @default(0) @map("consecutive_failures")
+  /// Only one sync may run per mailbox; a sync holds this lease while working.
+  syncLeaseUntil  DateTime?    @db.DateTime(3) @map("sync_lease_until")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

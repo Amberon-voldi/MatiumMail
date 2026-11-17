@@ -16,7 +16,11 @@ export type AuditAction =
   | "auth.login.failure"
   | "auth.login.rate_limited"
   | "auth.logout"
-  | "mailbox.credential.updated";
+  | "mailbox.credential.updated"
+  | "mailbox.auth_failed"
+  | "mail.sent"
+  | "mail.moved"
+  | "mail.trashed";
 
 export type AuditEntry = {
   organizationId: string;

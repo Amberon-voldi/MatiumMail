@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Suspense } from "react";
 import { Inbox, LogOut } from "lucide-react";
 import { signOutAction } from "@/app/actions/auth";
@@ -106,7 +107,7 @@ async function MailboxList() {
 function MailboxRow({ mailbox }: { mailbox: MailboxSummary }) {
   const ok = mailbox.status === "ACTIVE";
   return (
-    <div className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-sm hover:bg-muted">
+    <Link href={`/mail/${mailbox.id}`} className="flex items-center gap-2.5 rounded-lg px-2 py-2 text-sm hover:bg-muted">
       <span
         className={ok ? "size-2 shrink-0 rounded-full bg-emerald-500" : "size-2 shrink-0 rounded-full bg-amber-500"}
         aria-hidden="true"
@@ -116,7 +117,7 @@ function MailboxRow({ mailbox }: { mailbox: MailboxSummary }) {
         <span className="block truncate text-xs text-muted-foreground">{mailbox.address}</span>
       </span>
       <span className="sr-only">{ok ? "connected" : `status ${mailbox.status.toLowerCase()}`}</span>
-    </div>
+    </Link>
   );
 }
 

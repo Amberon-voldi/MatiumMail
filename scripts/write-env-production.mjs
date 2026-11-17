@@ -24,6 +24,11 @@ if (missing.length) {
   console.error(`Missing Amplify environment variables: ${missing.join(", ")}`);
   process.exit(1);
 }
+// The server refuses to start without an https:// APP_URL; fail the build instead.
+if (!/^https:\/\/[^/\s]+\/?$/.test(process.env.APP_URL)) {
+  console.error("APP_URL must be the site's https:// address, e.g. https://webmail.example.com");
+  process.exit(1);
+}
 
 // Quote so Next's dotenv parser returns the value byte-for-byte:
 //  - no double quote  → "…" with "$" escaped (dotenv-expand honours \$)

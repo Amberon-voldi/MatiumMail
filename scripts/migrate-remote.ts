@@ -1,6 +1,6 @@
 /**
  * Apply Prisma migrations to the database configured in the environment
- * (the MilesWeb MariaDB), over the app's pinned-TLS connection.
+ * (the MilesWeb MariaDB), over the app's TLS-verified connection.
  *
  *   npm run db:migrate:remote            apply pending migrations
  *   npm run db:migrate:remote -- --status   list applied / pending, change nothing

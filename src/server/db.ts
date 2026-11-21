@@ -8,21 +8,33 @@ import { env, type ServerEnv } from "./env";
 /**
  * Prisma client over the official MariaDB driver.
  *
- * Production (DB_TLS=pinned): TLS is mandatory and the server certificate must
- * be byte-for-byte the pinned one (SHA-256 fingerprint). MilesWeb's MariaDB
- * presents a long-lived self-signed certificate, so pinning is stronger than
- * trusting any CA. Plaintext is only possible for a localhost database
- * (enforced in env.ts).
+ * DB_TLS=verify (production default): TLS is mandatory and the driver checks
+ * the server's self-signed certificate with MariaDB 11.4+'s built-in
+ * verification — the server proves, inside the password exchange, that it
+ * holds the certificate's key, so a man in the middle without the password
+ * hash can't pass. MilesWeb's MariaDB has no ssl_cert configured and makes a
+ * new self-signed certificate on every restart, which broke pinning.
+ *
+ * DB_TLS=pinned: the certificate must be byte-for-byte the pinned one (SHA-256
+ * fingerprint). Only for servers with a fixed certificate.
+ *
+ * Plaintext is only possible for a localhost database (enforced in env.ts).
  */
 
-type TlsOptions = {
-  ca: string;
-  rejectUnauthorized: true;
-  checkServerIdentity: (host: string, cert: PeerCertificate) => Error | undefined;
-};
+type TlsOptions =
+  | { rejectUnauthorized: true }
+  | {
+      ca: string;
+      rejectUnauthorized: true;
+      checkServerIdentity: (host: string, cert: PeerCertificate) => Error | undefined;
+    };
 
 export function buildDbTls(e: Pick<ServerEnv, "DB_TLS" | "DB_TLS_CA_PEM_BASE64">): TlsOptions | undefined {
   if (e.DB_TLS === "disabled") return undefined;
+  // No `ca`: the MariaDB driver then validates the self-signed certificate
+  // through the password exchange (fails closed if the server or the auth
+  // plugin can't do that).
+  if (e.DB_TLS === "verify") return { rejectUnauthorized: true };
   const pem = Buffer.from(e.DB_TLS_CA_PEM_BASE64 ?? "", "base64").toString("utf8");
   let pinned: string;
   try {

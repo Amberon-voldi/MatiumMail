@@ -17,7 +17,7 @@ Architecture and decisions: [`docs/architecture/`](docs/architecture/) — start
 
 ```bash
 npm install                 # also generates the Prisma client
-cp .env.example .env        # then fill in DB_PASSWORD, DB_TLS_CA_PEM_BASE64, CREDENTIAL_KEYS (see comments)
+cp .env.example .env        # then fill in DB_PASSWORD, CREDENTIAL_KEYS (see comments)
 npm run db:status:remote    # check the connection (pinned TLS) and pending migrations
 npm run db:migrate:remote   # apply migrations
 npm run setup -- config/setup.example.json   # provision org, server profile, domains, allowed users

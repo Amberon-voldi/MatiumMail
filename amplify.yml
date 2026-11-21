@@ -4,8 +4,10 @@
 # secret ones as secret), with the SAME values as your local .env —
 # CREDENTIAL_KEYS in particular, because both use one database:
 #   APP_URL (https://…), DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME,
-#   DB_TLS=pinned, DB_TLS_CA_PEM_BASE64, CREDENTIAL_KEYS, CREDENTIAL_ACTIVE_KEY_ID
-#   optional: DB_CONNECTION_LIMIT, SESSION_IDLE_HOURS, SESSION_ABSOLUTE_DAYS
+#   DB_TLS=verify, CREDENTIAL_KEYS, CREDENTIAL_ACTIVE_KEY_ID
+#   optional: DB_CONNECTION_LIMIT, SESSION_IDLE_HOURS, SESSION_ABSOLUTE_DAYS,
+#   DB_TLS_CA_PEM_BASE64 (only with DB_TLS=pinned; MilesWeb's MariaDB makes a
+#   new self-signed certificate on every restart, so pinning breaks there)
 #
 # Amplify only exposes them during the build; scripts/write-env-production.mjs
 # copies them into .env.production so the Next.js server can read them at runtime.

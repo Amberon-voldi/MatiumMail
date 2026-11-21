@@ -13,11 +13,10 @@ const REQUIRED = [
   "DB_PASSWORD",
   "DB_NAME",
   "DB_TLS",
-  "DB_TLS_CA_PEM_BASE64",
   "CREDENTIAL_KEYS",
   "CREDENTIAL_ACTIVE_KEY_ID",
 ];
-const OPTIONAL = ["DB_PORT", "DB_CONNECTION_LIMIT", "SESSION_IDLE_HOURS", "SESSION_ABSOLUTE_DAYS"];
+const OPTIONAL = ["DB_TLS_CA_PEM_BASE64", "DB_PORT", "DB_CONNECTION_LIMIT", "SESSION_IDLE_HOURS", "SESSION_ABSOLUTE_DAYS"];
 
 const has = (k) => process.env[k] !== undefined && process.env[k] !== "";
 const missing = REQUIRED.filter((k) => !has(k));
@@ -30,8 +29,16 @@ if (!/^https:\/\/[^/\s]+\/?$/.test(process.env.APP_URL)) {
   console.error("APP_URL must be the site's https:// address, e.g. https://webmail.example.com");
   process.exit(1);
 }
+if (!["verify", "pinned"].includes(process.env.DB_TLS)) {
+  console.error("DB_TLS must be 'verify' (recommended) or 'pinned' for production");
+  process.exit(1);
+}
 // Same check as src/server/db.ts: a truncated paste otherwise only fails at runtime.
 if (process.env.DB_TLS === "pinned") {
+  if (!has("DB_TLS_CA_PEM_BASE64")) {
+    console.error("DB_TLS=pinned needs DB_TLS_CA_PEM_BASE64");
+    process.exit(1);
+  }
   try {
     new X509Certificate(Buffer.from(process.env.DB_TLS_CA_PEM_BASE64, "base64").toString("utf8"));
   } catch {

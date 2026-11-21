@@ -26,7 +26,7 @@ const schema = z
     DB_PASSWORD: z.string().min(1),
     DB_NAME: z.string().min(1),
     DB_CONNECTION_LIMIT: z.coerce.number().int().min(1).max(10).default(2),
-    DB_TLS: z.enum(["pinned", "disabled"]),
+    DB_TLS: z.enum(["verify", "pinned", "disabled"]),
     DB_TLS_CA_PEM_BASE64: z.string().optional(),
 
     CREDENTIAL_KEYS: z.string().min(1),
@@ -53,8 +53,8 @@ const schema = z
       });
     }
     if (e.NODE_ENV === "production") {
-      if (e.DB_TLS !== "pinned") {
-        ctx.addIssue({ code: "custom", path: ["DB_TLS"], message: "must be 'pinned' in production" });
+      if (e.DB_TLS === "disabled") {
+        ctx.addIssue({ code: "custom", path: ["DB_TLS"], message: "must be 'verify' or 'pinned' in production" });
       }
       if (!e.APP_URL.startsWith("https://")) {
         ctx.addIssue({ code: "custom", path: ["APP_URL"], message: "must be https:// in production" });

@@ -114,6 +114,7 @@ export function mailApi(mailboxId: string) {
   };
   return {
     base,
+    mailboxId,
     folders: () => api<{ folders: FolderDTO[] }>(`${base}/folders`),
     threads: (q: ThreadQuery, signal?: AbortSignal) =>
       api<ThreadPageDTO>(

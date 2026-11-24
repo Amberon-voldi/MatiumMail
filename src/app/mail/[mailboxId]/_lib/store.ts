@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { MessageBodyDTO, ThreadDTO, ThreadPageDTO, ThreadSummaryDTO } from "@/lib/mail-types";
 import { errorMessage, type MailApi, type ThreadQuery } from "./api";
+import { readSaved, save } from "@/lib/mail-cache";
 
 /**
  * In-memory caches for the mail app: conversation lists per folder/search,
  * conversations and message bodies. Switching back to a folder or reopening a
  * message is instant; data refreshes in the background (stale-while-revalidate),
  * and every action updates the caches optimistically.
+ *
+ * Folder lists, conversations and bodies are also kept on the device
+ * (@/lib/mail-cache), so they show instantly after the app is reopened too.
  */
 
 export class KeyedStore<T> {
@@ -130,12 +134,17 @@ function once<T>(key: string, run: () => Promise<T>): Promise<T> {
 /** Load (or refresh) the first page of a list. Never throws; errors land in the state. */
 export function loadList(api: MailApi, key: string, q: ThreadQuery): Promise<void> {
   return once(`list:${key}`, async () => {
+    if (!lists.get(key) && !listIsSearch(key)) {
+      const saved = await readSaved<ListState>("list", key);
+      if (saved && !lists.get(key)) lists.set(key, { ...saved.value, refreshing: false, loadingMore: false, fetchedAt: 0 });
+    }
     const prev = lists.get(key);
     if (!prev || (prev.status !== "ready" && prev.threads.length === 0)) lists.set(key, { ...EMPTY_LIST, status: "loading" });
     else lists.set(key, { ...prev, refreshing: true, error: null });
     try {
       const page = await api.threads(q);
       lists.set(key, mergeFirstPage(lists.get(key), page));
+      if (!listIsSearch(key)) save(listMailboxOf(key), "list", key, fromPage(page));
     } catch (err) {
       const cur = lists.get(key) ?? EMPTY_LIST;
       lists.set(key, {
@@ -233,21 +242,34 @@ export const EMPTY_RESOURCE: Resource<never> = { data: null, error: null, loadin
 export const threadStore = new KeyedStore<Resource<ThreadDTO>>();
 export const bodyStore = new KeyedStore<Resource<MessageBodyDTO>>();
 
+type Persist = { mailbox: string; kind: "thread" | "body" };
+
 export function ensure<T>(
   store: KeyedStore<Resource<T>>,
   key: string,
   loader: () => Promise<T>,
-  opts: { force?: boolean; staleMs?: number } = {},
+  opts: { force?: boolean; staleMs?: number; persist?: Persist } = {},
 ): Promise<void> {
+  const staleMs = opts.staleMs ?? 60_000;
   const cur = store.get(key);
-  const fresh = cur?.data && Date.now() - cur.at < (opts.staleMs ?? 60_000);
+  const fresh = cur?.data && Date.now() - cur.at < staleMs;
   if (!opts.force && (fresh || (cur?.loading && cur.at > 0))) return Promise.resolve();
   return once(`res:${key}`, async () => {
+    // Not in memory yet: show the copy saved on this device straight away, and
+    // only go to the network when it is stale.
+    if (!store.get(key)?.data && opts.persist) {
+      const saved = await readSaved<T>(opts.persist.kind, key);
+      if (saved && !store.get(key)?.data) {
+        store.set(key, { data: saved.value, error: null, loading: false, at: saved.savedAt });
+        if (!opts.force && Date.now() - saved.savedAt < staleMs) return;
+      }
+    }
     const prev = store.get(key);
     store.set(key, { data: prev?.data ?? null, error: null, loading: true, at: prev?.at ?? 1 });
     try {
       const data = await loader();
       store.set(key, { data, error: null, loading: false, at: Date.now() });
+      if (opts.persist) save(opts.persist.mailbox, opts.persist.kind, key, data);
     } catch (err) {
       store.set(key, { data: prev?.data ?? null, error: errorMessage(err), loading: false, at: prev?.at ?? 0 });
     }
@@ -258,13 +280,36 @@ export function bodyKey(messageId: string, images: "proxy" | "block"): string {
   return `${messageId}|${images}`;
 }
 
+const THREAD_STALE_MS = 30_000;
+/**
+ * A message's content never changes; only the image-proxy links in it expire
+ * (1–2 days after rendering, see image-proxy.ts), so bodies stay good for 20 h.
+ */
+const BODY_STALE_MS = 20 * 3_600_000;
+
+function loadThread(api: MailApi, messageId: string, force = false): Promise<void> {
+  return ensure(threadStore, messageId, () => api.thread(messageId), {
+    force,
+    staleMs: THREAD_STALE_MS,
+    persist: { mailbox: api.mailboxId, kind: "thread" },
+  });
+}
+
+function loadBody(api: MailApi, messageId: string, images: "proxy" | "block", force = false): Promise<void> {
+  return ensure(bodyStore, bodyKey(messageId, images), () => api.message(messageId, images), {
+    force,
+    staleMs: BODY_STALE_MS,
+    persist: { mailbox: api.mailboxId, kind: "body" },
+  });
+}
+
 export function useThread(api: MailApi, messageId: string | null): Resource<ThreadDTO> & { reload: () => void } {
   const state = useStore(threadStore, messageId, EMPTY_RESOURCE as Resource<ThreadDTO>);
   useEffect(() => {
-    if (messageId) void ensure(threadStore, messageId, () => api.thread(messageId), { staleMs: 30_000 });
+    if (messageId) void loadThread(api, messageId);
   }, [api, messageId]);
   const reload = useCallback(() => {
-    if (messageId) void ensure(threadStore, messageId, () => api.thread(messageId), { force: true });
+    if (messageId) void loadThread(api, messageId, true);
   }, [api, messageId]);
   return { ...state, reload };
 }
@@ -277,16 +322,29 @@ export function useBody(
   const key = messageId ? bodyKey(messageId, images) : null;
   const state = useStore(bodyStore, key, EMPTY_RESOURCE as Resource<MessageBodyDTO>);
   useEffect(() => {
-    if (messageId && key) void ensure(bodyStore, key, () => api.message(messageId, images), { staleMs: 10 * 60_000 });
-  }, [api, messageId, images, key]);
+    if (messageId) void loadBody(api, messageId, images);
+  }, [api, messageId, images]);
   const reload = useCallback(() => {
-    if (messageId && key) void ensure(bodyStore, key, () => api.message(messageId, images), { force: true });
-  }, [api, messageId, images, key]);
+    if (messageId) void loadBody(api, messageId, images, true);
+  }, [api, messageId, images]);
   return { ...state, reload };
 }
 
-/** Warm the caches when the pointer rests on a conversation, so opening it is instant. */
-export function prefetchThread(api: MailApi, latestId: string, images: "proxy" | "block"): void {
-  void ensure(threadStore, latestId, () => api.thread(latestId), { staleMs: 30_000 });
-  void ensure(bodyStore, bodyKey(latestId, images), () => api.message(latestId, images), { staleMs: 10 * 60_000 });
+/** Warm the caches (pointer resting on / finger touching a conversation), so opening it is instant. */
+export function prefetchThread(api: MailApi, latestId: string, images: "proxy" | "block"): Promise<void> {
+  return Promise.all([loadThread(api, latestId), loadBody(api, latestId, images)]).then(() => {});
+}
+
+/**
+ * Phones have no hover to prefetch on: quietly load the newest few
+ * conversations instead, one at a time so the mail server isn't flooded, and
+ * not at all when the user asked to save data.
+ */
+export async function prefetchTop(api: MailApi, latestIds: string[], images: "proxy" | "block"): Promise<void> {
+  const conn = (navigator as Navigator & { connection?: { saveData?: boolean; effectiveType?: string } }).connection;
+  if (conn?.saveData || conn?.effectiveType === "2g" || conn?.effectiveType === "slow-2g") return;
+  for (const id of latestIds) {
+    if (document.visibilityState !== "visible") return;
+    await prefetchThread(api, id, images);
+  }
 }

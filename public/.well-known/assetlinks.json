@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.matiumtech.mail",
+      "sha256_cert_fingerprints": [
+        "35:6E:17:AC:C7:23:70:06:01:FD:0D:46:AA:9E:6D:C7:7F:B2:8E:FC:F8:99:80:C3:62:3E:E6:D6:BA:85:06:5D"
+      ]
+    }
+  }
+]

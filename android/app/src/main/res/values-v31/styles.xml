@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+: the system splash plays the "mt" shards animation, then Chrome
+         shows @drawable/splash (the finished mark, same size and place) until the
+         page has painted, so the hand-over is seamless. -->
+    <style name="LauncherTheme" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+        <!-- Opaque: Android skips the splash for translucent activities. Same
+             colour as the splash, so nothing changes on screen when it ends. -->
+        <item name="android:windowBackground">@color/backgroundColor</item>
+        <item name="android:statusBarColor">@color/backgroundColor</item>
+        <item name="android:navigationBarColor">@color/backgroundColor</item>
+        <item name="android:windowSplashScreenBackground">@color/backgroundColor</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_anim</item>
+        <item name="android:windowSplashScreenAnimationDuration">800</item>
+    </style>
+</resources>

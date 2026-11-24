@@ -32,8 +32,8 @@ const schema = z
     CREDENTIAL_KEYS: z.string().min(1),
     CREDENTIAL_ACTIVE_KEY_ID: z.string().min(1),
 
-    SESSION_IDLE_HOURS: z.coerce.number().positive().max(24 * 30).default(12),
-    SESSION_ABSOLUTE_DAYS: z.coerce.number().positive().max(90).default(7),
+    SESSION_IDLE_HOURS: z.coerce.number().positive().max(24 * 30).default(24 * 30),
+    SESSION_ABSOLUTE_DAYS: z.coerce.number().positive().max(90).default(90),
 
     DEV_ALLOW_SELF_SIGNED_LOCAL_MAIL: z.stringbool().default(false),
   })

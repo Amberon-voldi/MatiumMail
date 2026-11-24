@@ -44,3 +44,12 @@ next-env.d.ts
 !.env.example
 /src/generated/
 /config/setup.local.json
+
+# Android (TWA) build output and machine-specific SDK path
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+/android/.idea/
+*.jks
+*.keystore

@@ -33,7 +33,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { ThreadQuery } from "../_lib/api";
 import { displayName, listDate } from "../_lib/format";
-import { EMPTY_LIST, loadList, loadMore, lists, prefetchThread, useStore, type ListState } from "../_lib/store";
+import { EMPTY_LIST, loadList, loadMore, lists, prefetchThread, prefetchTop, useStore, type ListState } from "../_lib/store";
 import { Avatar, EmptyState, IconButton, ListSkeleton } from "./bits";
 import { useMail, type MoveTarget } from "./mail-context";
 
@@ -58,6 +58,21 @@ export function ThreadList({ listKey, query, initialState }: { listKey: string; 
     const s = lists.get(listKey);
     if (!s || Date.now() - s.fetchedAt > 20_000) void loadList(api, listKey, query);
   }, [api, listKey, query]);
+
+  // On phones (no hover to prefetch on), load the newest few conversations in
+  // the background once the list is in, so opening them is instant.
+  const topIds = state.status === "ready" && !searching ? state.threads.slice(0, 5).map((t) => t.latestId).join(",") : "";
+  const images = mail.prefs.remoteImages === "ask" ? "block" : "proxy";
+  useEffect(() => {
+    if (!topIds || !window.matchMedia("(hover: none)").matches) return;
+    const run = () => void prefetchTop(api, topIds.split(","), images);
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(run, { timeout: 2_000 });
+      return () => window.cancelIdleCallback(id);
+    }
+    const t = setTimeout(run, 500);
+    return () => clearTimeout(t);
+  }, [api, topIds, images]);
 
   // Infinite scroll (and fetching older mail from the server at the end).
   const canLoadMore = state.status === "ready" && (Boolean(state.nextCursor) || (state.olderOnServer && !searching));
@@ -367,11 +382,22 @@ function ThreadRow({
           if (e.pointerType !== "mouse") return;
           clearTimeout(hoverTimer.current);
           hoverTimer.current = setTimeout(
-            () => prefetchThread(mail.api, t.latestId, mail.prefs.remoteImages === "ask" ? "block" : "proxy"),
+            () => void prefetchThread(mail.api, t.latestId, mail.prefs.remoteImages === "ask" ? "block" : "proxy"),
             120,
           );
         }}
         onPointerLeave={() => clearTimeout(hoverTimer.current)}
+        onPointerDown={(e) => {
+          // A finger resting on a row: start loading it before the tap ends.
+          // Scrolling cancels the pointer, and with it the prefetch.
+          if (e.pointerType === "mouse") return;
+          clearTimeout(hoverTimer.current);
+          hoverTimer.current = setTimeout(
+            () => void prefetchThread(mail.api, t.latestId, mail.prefs.remoteImages === "ask" ? "block" : "proxy"),
+            60,
+          );
+        }}
+        onPointerCancel={() => clearTimeout(hoverTimer.current)}
         style={swipe.style}
         className={cn(
           "group relative flex cursor-pointer gap-3 bg-background px-3 py-3 outline-none select-none focus-visible:bg-muted/70 md:px-4",

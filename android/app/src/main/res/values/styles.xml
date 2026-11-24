@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Before Android 12 the launcher stays invisible; Chrome shows @drawable/splash. -->
+    <style name="LauncherTheme" parent="@android:style/Theme.Translucent.NoTitleBar" />
+</resources>

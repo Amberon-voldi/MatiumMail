@@ -28,6 +28,7 @@ import { SettingsDialog, ShortcutsDialog } from "./settings";
 import { Sidebar } from "./sidebar";
 import { ThreadList } from "./thread-list";
 import { ThreadView } from "./thread-view";
+import { forgetMailboxesExcept, save as saveToDevice } from "@/lib/mail-cache";
 
 const POLL_MS = 60_000;
 
@@ -49,7 +50,8 @@ function queryFor(nav: Nav, conv: boolean): ThreadQuery {
   };
 }
 
-function patchThreadMessages(ids: Set<string>, patch: Partial<ThreadMessageDTO>) {
+/** Optimistically change messages in every open conversation, here and in the copy saved on the device. */
+function patchThreadMessages(mailboxId: string, ids: Set<string>, patch: Partial<ThreadMessageDTO>) {
   for (const key of threadStore.keys()) {
     const r = threadStore.get(key);
     if (!r?.data) continue;
@@ -59,7 +61,10 @@ function patchThreadMessages(ids: Set<string>, patch: Partial<ThreadMessageDTO>)
       changed = true;
       return { ...m, ...patch };
     });
-    if (changed) threadStore.set(key, { ...r, data: { ...r.data, messages } });
+    if (!changed) continue;
+    const data = { ...r.data, messages };
+    threadStore.set(key, { ...r, data });
+    saveToDevice(mailboxId, "thread", key, data);
   }
 }
 
@@ -96,6 +101,12 @@ export function MailApp(props: MailAppProps) {
   const [confirm, setConfirm] = useState<{ count: number; resolve: (ok: boolean) => void } | null>(null);
   const online = useSyncExternalStore(subscribeOnline, () => navigator.onLine, () => true);
   const can = useMemo(() => ({ organise: mailbox.role !== "READ_ONLY", send: mailbox.role !== "READ_ONLY" }), [mailbox.role]);
+
+  // Mail saved on this device for accounts that have since been signed out goes too.
+  const reachable = [mailbox.id, ...props.mailboxes.map((m) => m.id)].join(",");
+  useEffect(() => {
+    void forgetMailboxesExcept(reachable.split(","));
+  }, [reachable]);
 
   // ── URL state ────────────────────────────────────────────────────────────
   const inbox = folders.find((f) => f.role === "INBOX") ?? folders[0] ?? null;
@@ -248,7 +259,7 @@ export function MailApp(props: MailAppProps) {
         (t) => t.ids.some((id) => set.has(id)),
         (t) => ({ ...t, unread: seen ? t.unread && !t.ids.every((id) => set.has(id)) : true }),
       );
-      patchThreadMessages(set, { isSeen: seen });
+      patchThreadMessages(mailbox.id, set, { isSeen: seen });
       void run({ op: "flags", ids, seen });
     },
     [can.organise, mailbox.id, run],
@@ -259,7 +270,7 @@ export function MailApp(props: MailAppProps) {
       if (!ids.length || !can.organise) return;
       const set = new Set(ids);
       patchThreads(mailbox.id, (t) => t.ids.some((id) => set.has(id)), (t) => ({ ...t, flagged }));
-      patchThreadMessages(set, { isFlagged: flagged });
+      patchThreadMessages(mailbox.id, set, { isFlagged: flagged });
       void run({ op: "flags", ids, flagged });
     },
     [can.organise, mailbox.id, run],
